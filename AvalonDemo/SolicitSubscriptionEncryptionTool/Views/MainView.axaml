@@ -1,0 +1,29 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="clr-namespace:SolicitSubscriptionEncryptionTool.ViewModels"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+             x:Class="SolicitSubscriptionEncryptionTool.Views.MainView"
+             x:DataType="vm:MainViewModel">
+  <Design.DataContext>
+    <!-- This only sets the DataContext for the previewer in an IDE,
+         to set the actual DataContext for runtime, set the DataContext property in code (look at App.axaml.cs) -->
+    <vm:MainViewModel />
+  </Design.DataContext>
+
+  <StackPanel>
+    <Border Margin="5" CornerRadius="10" Background="LightBlue">
+      <TextBlock Margin="5" FontSize="24" FontWeight="Bold" HorizontalAlignment="Center" Text="征订资源加密工具" Foreground="Blue" />
+    </Border>
+    <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Top">
+      <TextBox Name="fileSelectTextBox" IsReadOnly="True" BorderBrush="LightBlue" Margin="5" CornerRadius="10" Height="30" Watermark="选择要加密的文件" />
+      <Button Content="选择文件" Margin="5" CornerRadius="10" Background="LightBlue" Click="SelectFileButton_Click" />
+    </StackPanel>
+    <Button Name="encryptButton" Margin="5" CornerRadius="10" Background="LightBlue" Click="EncryptClick">开始加密</Button>
+    <ProgressBar Name="progressBar" CornerRadius="10" Height="30" Minimum="0" Maximum="100" Margin="5,0,5,0"></ProgressBar>
+    <TextBox Name="encryptProgressContentTexbBox" BorderBrush="LightBlue" Margin="5,10,5,10" CornerRadius="10"
+    Height="300" AcceptsReturn="True" TextWrapping="Wrap" Text=""
+/>
+  </StackPanel>
+</UserControl>
