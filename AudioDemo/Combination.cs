@@ -33,6 +33,8 @@ namespace AudioDemo
 				{
 					WriteToOutput(reader, outputStream);
 				}
+				// 添加1秒的静音
+				WriteSilence(outputStream, targetFormat, 1.0f);
 			}
 
 			// 下面这个方法可能会导致合并的文件的声音不正常
@@ -71,6 +73,18 @@ namespace AudioDemo
 				   format1.BitsPerSample == format2.BitsPerSample &&
 				   format1.BlockAlign == format2.BlockAlign &&
 				   format1.AverageBytesPerSecond == format2.AverageBytesPerSecond;
+		}
+
+		static void WriteSilence(WaveFileWriter output, WaveFormat format, float durationSeconds)
+		{
+			int bytesPerSample = format.BitsPerSample / 8; // 每个采样点的字节数
+			int samplesPerSecond = format.SampleRate * format.Channels; // 每秒采样点数
+			int totalSamples = (int)(samplesPerSecond * durationSeconds); // 总采样点数
+
+			byte[] silenceBuffer = new byte[totalSamples * bytesPerSample]; // 静音数据缓冲区（默认为 0）
+
+			// 将静音数据写入输出流
+			output.Write(silenceBuffer, 0, silenceBuffer.Length);
 		}
 	}
 }
