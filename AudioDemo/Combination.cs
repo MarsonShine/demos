@@ -1,4 +1,5 @@
-﻿using NAudio.Wave;
+﻿using NAudio.Lame;
+using NAudio.Wave;
 
 namespace AudioDemo
 {
@@ -36,24 +37,40 @@ namespace AudioDemo
 				// 添加1秒的静音
 				WriteSilence(outputStream, targetFormat, 1.0f);
 			}
+		}
 
-			// 下面这个方法可能会导致合并的文件的声音不正常
-			//using var outputStream = new WaveFileWriter(outputFile, new WaveFormat(24000,16,1));
-			//foreach (var file in inputFiles)
-			//{
-			//	using var reader = new WaveFileReader(file);
-			//	if (!AreWaveFormatsEqual(outputStream.WaveFormat, reader.WaveFormat))
-			//	{
-			//		throw new InvalidOperationException("所有的 WAV 文件格式必须一致（采样率、通道数等）。");
-			//	}
+		public static void MixMp3AudioFiles()
+		{
+			string[] names = ["m1u1", "m1u2", "m2u1", "m2u2"];
+			foreach (var name in names)
+			{
+				// 扫描当前目录sound文件夹下的所有mp3文件
+				var inputFiles = System.IO.Directory.GetFiles("sound", "*.mp3");
+				string outputFile = $"sound/combination/output.mp3";
+				// 按文件创建时间排序
+				inputFiles = [.. inputFiles.OrderBy(file => new System.IO.FileInfo(file).Name)];
 
-			//	byte[] buffer = new byte[1024];
-			//	int bytesRead;
-			//	while ((bytesRead = reader.Read(buffer, 0, buffer.Length)) > 0)
-			//	{
-			//		outputStream.Write(buffer, 0, bytesRead);
-			//	}
-			//}
+				WaveFormat targetFormat = new(44100, 16, 2); // 目标格式
+				using var mp3Writer = new LameMP3FileWriter(outputFile, targetFormat, LAMEPreset.STANDARD);
+				foreach (var file in inputFiles)
+				{
+					using var mp3Reader = new Mp3FileReader(file);
+
+					// 如果需要重采样，就先转成统一 PCM 格式然后再塞给 LameMP3FileWriter
+					using var resampler = new MediaFoundationResampler(mp3Reader, targetFormat);
+					byte[] buffer = new byte[4096];
+					int bytesRead;
+					while ((bytesRead = resampler.Read(buffer, 0, buffer.Length)) > 0)
+					{
+						// 直接写到 mp3Writer，这样就完成了边解码、边重采样、边再编码
+						mp3Writer.Write(buffer, 0, bytesRead);
+					}
+
+					// 写 1 秒静音（要先转换成 PCM，再压到 mp3）
+					// 跟上面类似，静音的字节数组写进去
+					WriteSilence(mp3Writer, targetFormat, 1.0f);
+				}
+			}
 		}
 
 		static void WriteToOutput(IWaveProvider source, WaveFileWriter output)
@@ -76,6 +93,18 @@ namespace AudioDemo
 		}
 
 		static void WriteSilence(WaveFileWriter output, WaveFormat format, float durationSeconds)
+		{
+			int bytesPerSample = format.BitsPerSample / 8; // 每个采样点的字节数
+			int samplesPerSecond = format.SampleRate * format.Channels; // 每秒采样点数
+			int totalSamples = (int)(samplesPerSecond * durationSeconds); // 总采样点数
+
+			byte[] silenceBuffer = new byte[totalSamples * bytesPerSample]; // 静音数据缓冲区（默认为 0）
+
+			// 将静音数据写入输出流
+			output.Write(silenceBuffer, 0, silenceBuffer.Length);
+		}
+
+		static void WriteSilence(LameMP3FileWriter output, WaveFormat format, float durationSeconds)
 		{
 			int bytesPerSample = format.BitsPerSample / 8; // 每个采样点的字节数
 			int samplesPerSecond = format.SampleRate * format.Channels; // 每秒采样点数
