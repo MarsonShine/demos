@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json.schemastore.org/launchsettings.json",
+
+  // —— 如果本地仍想用 IIS Express，可以保留这段 —— 
+  "iisSettings": {
+    "windowsAuthentication": false,
+    "anonymousAuthentication": true,
+    "iisExpress": {
+      // F5 启动 IIS-Express 时使用的地址
+      "applicationUrl": "http://localhost:9527",
+      "sslPort": 0
+    }
+  },
+
+  "profiles": {
+
+    /* ① 直接运行项目（等同于  dotnet run …）*/
+    "MyDemo": {
+      "commandName": "Project",
+      "workingDirectory": ".",
+      // —— 关键：这里把远程 run.ps1 用到的参数写进来 —— 
+      "commandLineArgs": "-project F:\\demo -host TESTSRV -publishPath D:\\demo -runScript D:\\demo\\start.ps1 -user administrator -match demo.dll",
+      "dotnetRunMessages": true,
+
+      /* 如果想让 VS 启动浏览器就把 launchBrowser 设成 true */
+      "launchBrowser": true,
+      "applicationUrl": "http://localhost:9527",
+
+      /* 调试环境变量 */
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+        // 例如其它自定义变量
+        // "ConnectionStrings__Default": "Server=.;Database=MyDemo;Trusted_Connection=True;"
+      }
+    },
+
+    /* ② IIS Express 配置（可选，不用可删）*/
+    "IIS Express": {
+      "commandName": "IISExpress",
+      "launchBrowser": true,
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      },
+      "sslPort": 0
+    }
+  }
+}
