@@ -1,0 +1,6 @@
+@StreamTtsDemo_HostAddress = http://localhost:5057
+
+GET {{StreamTtsDemo_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
