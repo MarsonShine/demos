@@ -1,5 +1,8 @@
 using StreamTtsDemo;
 
+
+await StreamingTtsPlayer.Main([]);
+
 var builder = WebApplication.CreateBuilder(args);
 
 // 添加服务
@@ -27,8 +30,9 @@ app.MapGet("/api/tts", async (VolcaneTtsService ttsService) =>
 {
     //await TTSWebSocketDemo.Main([]);
     //await StreamingTTSClient.Main([]);
-    await OptimizedStreamingTTSClient.Main([]);
-    //var request = new TtsRequest("明朝开国皇帝朱元璋也称这本书为,万物之根");
+    //await OptimizedStreamingTTSClient.Main([]);
+    await StreamingTtsPlayer.Main([]);
+    //var request = new TtsRequest("c");
     //if (string.IsNullOrEmpty(request.Text))
     //{
     //    return Results.BadRequest("文本内容不能为空");
