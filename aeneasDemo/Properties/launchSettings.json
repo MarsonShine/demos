@@ -1,0 +1,9 @@
+{
+  "profiles": {
+    "aeneasDemo": {
+      "commandName": "Project",
+      "workingDirectory": "$(ProjectDir)",
+      "commandLineArgs": "--audio \"C:\\Users\\shuai.mao\\Downloads\\temp_align.wav\" --text \"This is Yoyo. He's a bit naughty, but he is not a bad bird.\" --precise --task \"task_language=eng|is_text_type=plain|os_task_file_format=json|task_adjust_boundary_algorithm=beforenext|task_adjust_boundary_beforenext_value=0.08|task_adjust_boundary_nonspeech_min=0.05\""
+    }
+  }
+}
