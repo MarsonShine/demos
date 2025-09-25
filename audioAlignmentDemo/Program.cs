@@ -20,11 +20,11 @@ class Program
 
             var splitter = new AudioSplitter();
 
-            // 🎛️ 针对"切断单词"问题的优化配置
+            // 🎛️ 针对"切断单词"和"语气词"问题的优化配置
             var config = new SplitterConfig
             {
                 // 基本配置
-                InputAudioPath = "temp_align.wav",
+                InputAudioPath = "temp_align.wav",  // 📝 现在支持 .wav, .mp3, .m4a, .wma, .aac, .flac 等格式
                 OutputDirectory = "output_sentences",
                 Language = "en", 
                 ModelSize = "tiny",
@@ -32,10 +32,18 @@ class Program
                 // ⚙️ 精度调整参数 - 针对切断单词问题优化
                 SentenceBoundaryPadding = 0.4,         // 📈 增加到0.4秒，给单词更多缓冲时间
                 TimeAllocationMode = "proportional",    // 按字符比例分配
-                MinSentenceCharacters = 5,             // 📈 增加到15字符，避免短片段
+                MinSentenceCharacters = 5,             // 最小字符数
                 SilencePaddingAfterPunctuation = 0.3,   // 📈 标点后0.3秒静音
                 EnableSmartBoundaryAdjustment = true,   // 启用智能调整
                 WordBoundaryMode = "smart",             // 智能边界检测
+
+                // 🎭 语气词和特殊情况处理参数 (新增)
+                InterjectionPadding = 0.08,              // 🎭 语气词额外时间 (Ha ha!, Oh!, Wow!)
+                ShortSentenceMode = "extend",           // 🎯 短句扩展模式
+                EnableRepeatedWordDetection = true,     // 🔄 检测重复词汇 (Yo yo, Ha ha)
+                IntonationBuffer = 0.1,                // 🎵 语调变化缓冲时间
+                DynamicTimeAdjustmentFactor = 1,      // 📊 动态时间调整系数
+
                 DebugMode = true,                       // 🔍 显示详细信息
 
                 // 时长控制
@@ -45,7 +53,11 @@ class Program
             };
 
             Console.WriteLine("🚀 开始处理...");
+            Console.WriteLine($"📂 输入文件: {config.InputAudioPath} 📄 支持格式: WAV, MP3, M4A, WMA, AAC, FLAC");
             Console.WriteLine($"📏 边界填充: {config.SentenceBoundaryPadding}s");
+            Console.WriteLine($"🎭 语气词填充: {config.InterjectionPadding}s");
+            Console.WriteLine($"🎵 语调缓冲: {config.IntonationBuffer}s");
+            Console.WriteLine($"📊 动态调整: {config.DynamicTimeAdjustmentFactor}x");
             Console.WriteLine($"📝 最小字符: {config.MinSentenceCharacters}");
             Console.WriteLine($"🔇 标点静音: {config.SilencePaddingAfterPunctuation}s");
             Console.WriteLine();
@@ -88,9 +100,8 @@ public class AudioSplitter
         // 2. 准备输出目录
         Directory.CreateDirectory(config.OutputDirectory);
 
-        // 3. 转换音频格式
-        string processedAudio = Path.Combine(config.OutputDirectory, "processed.wav");
-        ConvertToWhisperFormat(config.InputAudioPath, processedAudio);
+        // 3. 检测并转换音频格式
+        string processedAudio = await ConvertToWhisperFormatAsync(config.InputAudioPath, config.OutputDirectory);
 
         // 4. 使用Whisper进行语音识别和时间对齐
         var segments = await PerformAlignment(processedAudio, config);
@@ -109,9 +120,101 @@ public class AudioSplitter
             File.Delete(processedAudio);
     }
 
-    private void ConvertToWhisperFormat(string inputPath, string outputPath)
+    private async Task<string> ConvertToWhisperFormatAsync(string inputPath, string outputDirectory)
     {
-        Console.WriteLine("转换音频格式...");
+        var inputExtension = Path.GetExtension(inputPath).ToLowerInvariant();
+        var outputPath = Path.Combine(outputDirectory, "processed.wav");
+        
+        Console.WriteLine($"🎵 检测音频格式: {inputExtension.ToUpper().TrimStart('.')}");
+        
+        // 支持的音频格式检查
+        var supportedFormats = new[] { ".wav", ".mp3", ".m4a", ".wma", ".aac", ".flac", ".ogg", ".mp4" };
+        
+        if (!supportedFormats.Contains(inputExtension))
+        {
+            var supportedList = string.Join(", ", supportedFormats.Select(f => f.ToUpper().TrimStart('.')));
+            throw new NotSupportedException($"❌ 不支持的音频格式: {inputExtension.ToUpper().TrimStart('.')}\n✅ 支持的格式: {supportedList}");
+        }
+
+        try
+        {
+            if (inputExtension == ".wav")
+            {
+                Console.WriteLine("📄 检测到WAV格式，进行优化处理...");
+                ConvertWavToWhisperFormat(inputPath, outputPath);
+            }
+            else
+            {
+                Console.WriteLine($"🔄 转换 {inputExtension.ToUpper().TrimStart('.')} 格式到标准WAV...");
+                await ConvertToWavAsync(inputPath, outputPath);
+            }
+            
+            // 验证转换结果
+            if (!File.Exists(outputPath))
+            {
+                throw new InvalidOperationException("转换后的音频文件不存在");
+            }
+
+            var fileSize = new FileInfo(outputPath).Length;
+            if (fileSize < 1024) // 小于1KB可能有问题
+            {
+                throw new InvalidOperationException($"转换后的音频文件过小 ({fileSize} bytes)，可能转换失败");
+            }
+
+            Console.WriteLine($"✅ 音频转换完成，文件大小: {fileSize / 1024:F1} KB");
+            return outputPath;
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException($"音频格式转换失败: {ex.Message}", ex);
+        }
+    }
+
+    private async Task ConvertToWavAsync(string inputPath, string outputPath)
+    {
+        try
+        {
+            using var reader = new AudioFileReader(inputPath);
+            
+            Console.WriteLine($"📊 原始格式信息:");
+            Console.WriteLine($"   采样率: {reader.WaveFormat.SampleRate}Hz");
+            Console.WriteLine($"   声道数: {reader.WaveFormat.Channels}");
+            Console.WriteLine($"   位深度: {reader.WaveFormat.BitsPerSample}位");
+            Console.WriteLine($"   编码: {reader.WaveFormat.Encoding}");
+            Console.WriteLine($"   时长: {reader.TotalTime.TotalSeconds:F2}秒");
+            
+            // Whisper需要16kHz单声道PCM格式
+            var targetFormat = new WaveFormat(16000, 16, 1);
+            
+            Console.WriteLine($"🎯 目标格式: 16kHz, 16位, 单声道 PCM");
+            
+            // 使用MediaFoundationResampler进行转换
+            using var resampler = new MediaFoundationResampler(reader, targetFormat)
+            {
+                ResamplerQuality = 60 // 高质量重采样
+            };
+            
+            // 写入标准PCM WAV文件
+            WaveFileWriter.CreateWaveFile(outputPath, resampler);
+            
+            Console.WriteLine($"✅ 转换完成: {outputPath}");
+            
+            // 验证输出文件
+            ValidateConvertedFile(outputPath);
+        }
+        catch (Exception ex)
+        {
+            // 如果NAudio无法处理，尝试使用FFmpeg（如果可用）
+            Console.WriteLine($"⚠️ NAudio转换失败: {ex.Message}");
+            Console.WriteLine($"🔄 尝试备用转换方法...");
+            
+            await TryFFmpegConversion(inputPath, outputPath);
+        }
+    }
+
+    private void ConvertWavToWhisperFormat(string inputPath, string outputPath)
+    {
+        Console.WriteLine("🔄 优化WAV格式...");
 
         try
         {
@@ -124,11 +227,11 @@ public class AudioSplitter
             using var reader = new AudioFileReader(inputPath);
             
             // Whisper需要16kHz单声道PCM格式
-            var targetFormat = new WaveFormat(16000, 16, 1); // 16kHz, 16-bit, mono
+            var targetFormat = new WaveFormat(16000, 16, 1);
 
-            Console.WriteLine($"原始格式: {reader.WaveFormat.SampleRate}Hz, {reader.WaveFormat.Channels}通道, {reader.WaveFormat.BitsPerSample}位");
-            Console.WriteLine($"原始编码: {reader.WaveFormat.Encoding}");
-            Console.WriteLine($"目标格式: {targetFormat.SampleRate}Hz, {targetFormat.Channels}通道, {targetFormat.BitsPerSample}位");
+            Console.WriteLine($"📊 原始格式: {reader.WaveFormat.SampleRate}Hz, {reader.WaveFormat.Channels}通道, {reader.WaveFormat.BitsPerSample}位");
+            Console.WriteLine($"📊 原始编码: {reader.WaveFormat.Encoding}");
+            Console.WriteLine($"🎯 目标格式: {targetFormat.SampleRate}Hz, {targetFormat.Channels}通道, {targetFormat.BitsPerSample}位");
 
             // 强制重新采样和格式转换
             using var resampler = new MediaFoundationResampler(reader, targetFormat)
@@ -139,14 +242,61 @@ public class AudioSplitter
             // 使用标准的WAV文件写入方法
             WaveFileWriter.CreateWaveFile(outputPath, resampler);
 
-            Console.WriteLine($"音频已转换: {outputPath}");
+            Console.WriteLine($"✅ 音频已优化: {outputPath}");
             
             // 验证输出文件
             ValidateConvertedFile(outputPath);
         }
         catch (Exception ex)
         {
-            throw new InvalidOperationException($"音频格式转换失败: {ex.Message}", ex);
+            throw new InvalidOperationException($"WAV格式优化失败: {ex.Message}", ex);
+        }
+    }
+
+    private async Task TryFFmpegConversion(string inputPath, string outputPath)
+    {
+        try
+        {
+            Console.WriteLine("🛠️ 尝试使用FFmpeg进行转换...");
+            
+            var startInfo = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "ffmpeg",
+                Arguments = $"-i \"{inputPath}\" -ar 16000 -ac 1 -sample_fmt s16 -y \"{outputPath}\"",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+
+            using var process = new System.Diagnostics.Process { StartInfo = startInfo };
+            
+            process.Start();
+            
+            var output = await process.StandardOutput.ReadToEndAsync();
+            var error = await process.StandardError.ReadToEndAsync();
+            
+            await process.WaitForExitAsync();
+
+            if (process.ExitCode == 0)
+            {
+                Console.WriteLine("✅ FFmpeg转换成功");
+                ValidateConvertedFile(outputPath);
+            }
+            else
+            {
+                throw new InvalidOperationException($"FFmpeg转换失败: {error}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ FFmpeg转换也失败了: {ex.Message}");
+            Console.WriteLine("💡 建议:");
+            Console.WriteLine("   1. 安装FFmpeg并添加到PATH环境变量");
+            Console.WriteLine("   2. 或将音频文件手动转换为WAV格式");
+            Console.WriteLine("   3. 或使用在线音频转换工具");
+            
+            throw new InvalidOperationException($"无法转换音频格式。请确保文件格式正确或安装FFmpeg。原始错误: {ex.Message}");
         }
     }
 
@@ -237,7 +387,7 @@ public class AudioSplitter
             
             // 尝试重新转换音频文件
             var backupPath = audioPath + ".fixed.wav";
-            ConvertToWhisperFormat(audioPath, backupPath);
+            ConvertWavToWhisperFormat(audioPath, backupPath);
             
             // 递归调用，但要防止无限递归
             if (!audioPath.Contains(".fixed.wav"))
@@ -524,22 +674,35 @@ public class AudioSplitter
         double totalDuration = original.Duration;
         double currentTime = original.StartTime;
         
-        // 预留边界调整时间
-        double reservedPadding = config.SentenceBoundaryPadding * sentences.Count;
-        double availableDuration = Math.Max(totalDuration - reservedPadding, totalDuration * 0.8);
+        // 分析每个句子的特征，计算所需的额外时间
+        var sentenceAnalysis = AnalyzeSentenceCharacteristics(sentences, config);
+        var totalExtraTime = sentenceAnalysis.Sum(a => a.ExtraTimeNeeded);
+        
+        // 预留边界调整时间和特殊情况处理时间
+        double reservedPadding = config.SentenceBoundaryPadding * sentences.Count + totalExtraTime;
+        double availableDuration = Math.Max(totalDuration - reservedPadding, totalDuration * 0.7);
         
         if (config.DebugMode)
         {
+            Console.WriteLine($"🔍 [DEBUG] 智能时间分配分析:");
             Console.WriteLine($"🔍 [DEBUG] 时间分配策略: {config.TimeAllocationMode}");
-            Console.WriteLine($"🔍 [DEBUG] 总时长: {totalDuration:F3}s, 可用时长: {availableDuration:F3}s, 预留填充: {reservedPadding:F3}s");
+            Console.WriteLine($"🔍 [DEBUG] 总时长: {totalDuration:F3}s, 可用时长: {availableDuration:F3}s");
+            Console.WriteLine($"🔍 [DEBUG] 预留填充: {reservedPadding:F3}s (包含特殊处理: {totalExtraTime:F3}s)");
+            
+            for (int j = 0; j < sentenceAnalysis.Count; j++)
+            {
+                var analysis = sentenceAnalysis[j];
+                Console.WriteLine($"🔍 [DEBUG] 句子{j+1}特征: {string.Join(", ", analysis.Characteristics)} (+{analysis.ExtraTimeNeeded:F3}s)");
+            }
         }
         
         for (int i = 0; i < sentences.Count; i++)
         {
             var sentence = sentences[i];
+            var analysis = sentenceAnalysis[i];
             double duration;
             
-            // 根据配置选择时间分配方式
+            // 根据配置选择基础时间分配方式
             if (config.TimeAllocationMode == "equal")
             {
                 duration = availableDuration / sentences.Count;
@@ -551,7 +714,10 @@ public class AudioSplitter
                 duration = availableDuration * proportion;
             }
             
-            // 应用边界填充
+            // 应用动态时间调整
+            duration *= config.DynamicTimeAdjustmentFactor;
+            
+            // 应用智能边界填充
             if (config.EnableSmartBoundaryAdjustment)
             {
                 // 句子开始前的填充
@@ -560,7 +726,10 @@ public class AudioSplitter
                     currentTime += config.SentenceBoundaryPadding / 2;
                 }
                 
-                // 句子结束后的填充（如果有标点符号）
+                // 应用句子特征的额外时间
+                duration += analysis.ExtraTimeNeeded;
+                
+                // 标点符号后的填充
                 if (IsNaturalBreakPoint(sentence.Text))
                 {
                     duration += config.SilencePaddingAfterPunctuation;
@@ -587,7 +756,9 @@ public class AudioSplitter
             
             if (config.DebugMode)
             {
-                Console.WriteLine($"🔍 [DEBUG] 句子 {i+1}: \"{sentence.Text}\" -> [{currentTime:F3}s-{endTime:F3}s] ({duration:F3}s)");
+                Console.WriteLine($"🔍 [DEBUG] 句子 {i+1}: \"{sentence.Text}\"");
+                Console.WriteLine($"🔍 [DEBUG]   时间: [{currentTime:F3}s-{endTime:F3}s] ({duration:F3}s)");
+                Console.WriteLine($"🔍 [DEBUG]   特征: {string.Join(", ", analysis.Characteristics)}");
             }
             
             currentTime = endTime;
@@ -596,19 +767,132 @@ public class AudioSplitter
         return result;
     }
 
-    // 辅助数据结构
-    private class SentenceInfo
+    private List<SentenceAnalysis> AnalyzeSentenceCharacteristics(List<SentenceInfo> sentences, SplitterConfig config)
     {
-        public string Text { get; set; } = "";
-        public int StartPosition { get; set; }
-        public int EndPosition { get; set; }
-        public int CharacterLength { get; set; }
+        var analyses = new List<SentenceAnalysis>();
+        
+        foreach (var sentence in sentences)
+        {
+            var analysis = new SentenceAnalysis
+            {
+                Sentence = sentence,
+                Characteristics = new List<string>(),
+                ExtraTimeNeeded = 0.0
+            };
+            
+            var text = sentence.Text.Trim();
+            var lowerText = text.ToLowerInvariant();
+            
+            // 🎭 检测语气词和感叹词
+            if (IsInterjection(lowerText))
+            {
+                analysis.Characteristics.Add("语气词");
+                analysis.ExtraTimeNeeded += config.InterjectionPadding;
+            }
+            
+            // 🔄 检测重复词汇
+            if (config.EnableRepeatedWordDetection && HasRepeatedWords(lowerText))
+            {
+                analysis.Characteristics.Add("重复词汇");
+                analysis.ExtraTimeNeeded += config.InterjectionPadding * 0.7;
+            }
+            
+            // 🎵 检测感叹句和疑问句（语调变化）
+            if (text.EndsWith("!") || text.EndsWith("?") || text.EndsWith("！") || text.EndsWith("？"))
+            {
+                analysis.Characteristics.Add("语调变化");
+                analysis.ExtraTimeNeeded += config.IntonationBuffer;
+            }
+            
+            // 📏 检测短句
+            if (text.Length < config.MinSentenceCharacters * 2)
+            {
+                analysis.Characteristics.Add("短句");
+                if (config.ShortSentenceMode == "extend")
+                {
+                    analysis.ExtraTimeNeeded += config.SentenceBoundaryPadding;
+                }
+            }
+            
+            // 🗣️ 检测可能的停顿词
+            if (ContainsPauseWords(lowerText))
+            {
+                analysis.Characteristics.Add("停顿词");
+                analysis.ExtraTimeNeeded += config.SilencePaddingAfterPunctuation;
+            }
+            
+            // 如果没有特殊特征，标记为普通句子
+            if (analysis.Characteristics.Count == 0)
+            {
+                analysis.Characteristics.Add("普通句子");
+            }
+            
+            analyses.Add(analysis);
+        }
+        
+        return analyses;
     }
 
-    private bool IsSentenceEndingChar(char c)
+    private bool IsInterjection(string text)
     {
-        return c == '.' || c == '!' || c == '?' || c == ';' || 
-               c == '。' || c == '！' || c == '？' || c == '；';
+        // 常见的语气词和感叹词模式
+        var interjectionPatterns = new[]
+        {
+            "ha ha", "haha", "ah ha", "aha",
+            "oh", "oh!", "ooh", "wow", "wow!",
+            "hey", "hey!", "hi", "hello",
+            "um", "uh", "er", "hmm",
+            "yay", "yeah", "yes!", "no!",
+            "oops", "whoops", "huh", "eh",
+            "yo", "yoyo", "yo yo"
+        };
+        
+        return interjectionPatterns.Any(pattern => 
+            text.Contains(pattern) || 
+            text.StartsWith(pattern + " ") || 
+            text.EndsWith(" " + pattern) ||
+            text == pattern
+        );
+    }
+
+    private bool HasRepeatedWords(string text)
+    {
+        // 检测重复词汇模式，如"ha ha", "yo yo", "no no"等
+        var words = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        
+        for (int i = 0; i < words.Length - 1; i++)
+        {
+            if (words[i].Equals(words[i + 1], StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+        
+        // 检测常见的重复模式
+        var repeatedPatterns = new[]
+        {
+            "ha ha", "ho ho", "he he", "hi hi",
+            "yo yo", "no no", "oh oh", "ah ah"
+        };
+        
+        return repeatedPatterns.Any(pattern => text.Contains(pattern));
+    }
+
+    private bool ContainsPauseWords(string text)
+    {
+        // 检测可能导致停顿的词汇
+        var pauseWords = new[]
+        {
+            "well", "so", "and", "but", "however",
+            "actually", "really", "like", "you know",
+            "i mean", "basically", "obviously"
+        };
+        
+        return pauseWords.Any(word => 
+            text.StartsWith(word + " ") || 
+            text.Contains(" " + word + " ") ||
+            text.EndsWith(" " + word)
+        );
     }
 
     private bool IsNaturalBreakPoint(string text)
@@ -619,6 +903,12 @@ public class AudioSplitter
         
         // 检查文本是否以句子结束符号结尾
         return breakPoints.Any(bp => trimmedText.EndsWith(bp));
+    }
+
+    private bool IsSentenceEndingChar(char c)
+    {
+        return c == '.' || c == '!' || c == '?' || c == ';' || 
+               c == '。' || c == '！' || c == '？' || c == '；';
     }
 
     private AudioSegment CombineSegments(List<AudioSegment> segments)
@@ -697,7 +987,7 @@ public class AudioSplitter
                 using var writer = new WaveFileWriter(outputPath, format);
                 
                 // 使用较小的缓冲区以获得更好的精度
-                var bufferSize = Math.Min(format.AverageBytesPerSecond / 4, (int)totalBytes); // 0.25秒或实际需要的大小
+                var bufferSize = Math.Min(format.AverageBytesPerSecond / 4, (int)totalBytes);
                 var buffer = new byte[bufferSize];
                 var bytesRead = 0L;
 
@@ -820,6 +1110,7 @@ public class AudioSplitter
     }
 }
 
+// 辅助数据结构
 public class AudioSegment
 {
     public double StartTime { get; set; }
@@ -830,6 +1121,21 @@ public class AudioSegment
     public string OutputPath { get; set; } = "";
 }
 
+public class SentenceInfo
+{
+    public string Text { get; set; } = "";
+    public int StartPosition { get; set; }
+    public int EndPosition { get; set; }
+    public int CharacterLength { get; set; }
+}
+
+public class SentenceAnalysis
+{
+    public SentenceInfo Sentence { get; set; } = new();
+    public List<string> Characteristics { get; set; } = new();
+    public double ExtraTimeNeeded { get; set; }
+}
+
 public class SplitterConfig
 {
     // 基本配置
@@ -838,11 +1144,28 @@ public class SplitterConfig
     public string Language { get; set; } = "zh";
     public string ModelSize { get; set; } = "tiny"; // tiny, base, small, medium, large
 
+    // 🎵 音频格式支持
+    /// <summary>
+    /// 支持的音频格式列表
+    /// 自动检测: WAV, MP3, M4A, WMA, AAC, FLAC, OGG
+    /// </summary>
+    public string[] SupportedFormats { get; } = { ".wav", ".mp3", ".m4a", ".wma", ".aac", ".flac", ".ogg" };
+
+    /// <summary>
+    /// 音频转换质量 (1-100, 60为高质量)
+    /// </summary>
+    public int AudioConversionQuality { get; set; } = 60;
+
+    /// <summary>
+    /// 启用FFmpeg备用转换 - 当NAudio无法处理时使用FFmpeg
+    /// </summary>
+    public bool EnableFFmpegFallback { get; set; } = true;
+
     // 时长控制参数
     public double MaxSegmentDuration { get; set; } = 30.0;
     public double MinSegmentDuration { get; set; } = 1.0;
 
-    // 🎯 切割精度调整参数 (新增)
+    // 🎯 切割精度调整参数
     /// <summary>
     /// 句子边界扩展时间（秒）- 向前扩展多少时间来避免切断单词
     /// 建议值: 0.1-0.5秒
@@ -892,4 +1215,48 @@ public class SplitterConfig
     /// "balanced": 平衡模式，优先标点符号但考虑单词完整性
     /// </summary>
     public string WordBoundaryMode { get; set; } = "smart";
+
+    // 🎭 语气词和特殊情况处理参数 (新增)
+    /// <summary>
+    /// 语气词扩展时间（秒）- 为语气词（如Ha ha!, Oh!, Wow!）添加额外的时间
+    /// 语气词通常有延长音和自然停顿，需要更多时间
+    /// 建议值: 0.2-0.6秒
+    /// </summary>
+    public double InterjectionPadding { get; set; } = 0.4;
+
+    /// <summary>
+    /// 短句特殊处理模式
+    /// "extend": 为短句添加更多时间缓冲
+    /// "merge": 将短句与相邻句子合并
+    /// "preserve": 保持原始时间分配
+    /// </summary>
+    public string ShortSentenceMode { get; set; } = "extend";
+
+    /// <summary>
+    /// 重复词汇检测 - 检测如"Ha ha", "Yo yo"等重复模式
+    /// 这类词汇通常需要更多的音频时间
+    /// </summary>
+    public bool EnableRepeatedWordDetection { get; set; } = true;
+
+    /// <summary>
+    /// 语调变化缓冲时间（秒）- 为感叹句、疑问句等添加额外时间
+    /// 这些句子通常有语调变化，发音时间更长
+    /// 建议值: 0.1-0.3秒
+    /// </summary>
+    public double IntonationBuffer { get; set; } = 0.2;
+
+    /// <summary>
+    /// 动态时间调整系数 - 根据句子特征动态调整时间分配
+    /// 1.0 = 不调整, 1.2 = 增加20%, 0.8 = 减少20%
+    /// 建议值: 1.1-1.3
+    /// </summary>
+    public double DynamicTimeAdjustmentFactor { get; set; } = 1.2;
+
+    /// <summary>
+    /// 获取支持的格式字符串用于显示
+    /// </summary>
+    public string GetSupportedFormatsString()
+    {
+        return string.Join(", ", SupportedFormats.Select(f => f.ToUpper().TrimStart('.')));
+    }
 }
