@@ -1,4 +1,5 @@
-﻿using System.Diagnostics;
+﻿using AudioAlignmentDemo.Models;
+using System.Diagnostics;
 
 namespace audioAlignmentDemo
 {

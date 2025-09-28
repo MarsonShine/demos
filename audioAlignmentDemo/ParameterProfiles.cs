@@ -2,6 +2,7 @@
 // 根据切割效果选择合适的参数组合
 
 using System;
+using AudioAlignmentDemo.Models;
 
 public static class ParameterProfiles
 {

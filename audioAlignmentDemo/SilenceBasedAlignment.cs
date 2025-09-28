@@ -1,4 +1,5 @@
-﻿using NAudio.Wave;
+﻿using AudioAlignmentDemo.Models;
+using NAudio.Wave;
 
 namespace audioAlignmentDemo
 {
