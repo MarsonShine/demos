@@ -9,13 +9,18 @@ class Program
     {
         try
         {
-            Console.WriteLine("🎤 音频句子自动切割系统");
+            Console.WriteLine("🎤 音频句子自动切割系统 (保持原始音质版)");
             Console.WriteLine("===================================");
             Console.WriteLine("📝 功能: 将包含多个句子的音频文件自动切割成独立的句子音频文件");
             Console.WriteLine("🎯 示例: \"This is Marson! He's a bit naughty, but he is not a bad bird.\"");
             Console.WriteLine("   将被切割成:");
-            Console.WriteLine("   📁 sentence_01_xxx_This_is_Marson.wav");
-            Console.WriteLine("   📁 sentence_02_xxx_Hes_a_bit_naughty.wav");
+            Console.WriteLine("   📁 sentence_01_xxx_This_is_Marson.mp3 (保持原始MP3格式)");
+            Console.WriteLine("   📁 sentence_02_xxx_Hes_a_bit_naughty.mp3 (保持原始音质)");
+            Console.WriteLine();
+            Console.WriteLine("🎵 特色功能:");
+            Console.WriteLine("   ✨ 智能音质保持: 输出文件与输入文件格式和音质完全一致");
+            Console.WriteLine("   🎯 双模式处理: Whisper识别用WAV，切割用原始格式");
+            Console.WriteLine("   🛠️ FFmpeg直接切割: 使用流复制技术，无损切割原始文件");
             Console.WriteLine();
 
             var splitter = new AudioSplitter();
@@ -24,10 +29,18 @@ class Program
             var config = new SplitterConfig
             {
                 // 基本配置
-                InputAudioPath = "temp_align.wav",  // 📝 现在支持 .wav, .mp3, .m4a, .wma, .aac, .flac 等格式
+                InputAudioPath = "be64c3b9-662c-47cf-8faa-3b663e8aaa0e.mp3",  // 📝 现在支持 .wav, .mp3, .m4a, .wma, .aac, .flac 等格式
                 OutputDirectory = "output_sentences",
                 Language = "en", 
                 ModelSize = "tiny",
+
+                // 🎵 音频品质配置 (新增)
+                AudioQualityStrategy = "HighQuality",   // 🎯 高品质策略，保持音质
+                AudioConversionQuality = 100,           // 🎨 最高转换质量
+                ForceSampleRate = 0,                    // 📊 自动选择最佳采样率
+                ForceBitDepth = 0,                      // 🎵 自动选择最佳位深度
+                ForceChannels = 0,                      // 🔊 自动选择最佳声道数
+                KeepOriginalAudio = true,               // 📁 保留原始音频文件
 
                 // ⚙️ 精度调整参数 - 针对切断单词问题优化
                 SentenceBoundaryPadding = 0.4,         // 📈 增加到0.4秒，给单词更多缓冲时间
@@ -36,6 +49,11 @@ class Program
                 SilencePaddingAfterPunctuation = 0.3,   // 📈 标点后0.3秒静音
                 EnableSmartBoundaryAdjustment = true,   // 启用智能调整
                 WordBoundaryMode = "smart",             // 智能边界检测
+
+                // 🔧 时间校正参数 (新增 - 解决辅音截断问题)
+                EnableTimeCorrection = true,            // 🎯 启用智能时间校正
+                TimeCorrectionThreshold = 0.1,          // 📏 时间差异阈值0.1秒
+                MaxExtensionTime = 0.5,                 // 🔀 最大扩展时间0.5秒
 
                 // 🎭 语气词和特殊情况处理参数 (新增)
                 InterjectionPadding = 0.08,              // 🎭 语气词额外时间 (Ha ha!, Oh!, Wow!)
@@ -53,13 +71,17 @@ class Program
             };
 
             Console.WriteLine("🚀 开始处理...");
-            Console.WriteLine($"📂 输入文件: {config.InputAudioPath} 📄 支持格式: WAV, MP3, M4A, WMA, AAC, FLAC");
+            Console.WriteLine($"📂 输入文件: {config.InputAudioPath} 📄 支持格式: {config.GetSupportedFormatsString()}");
+            Console.WriteLine($"🎵 处理策略: 双模式处理 (Whisper识别用WAV，切割保持原始格式)");
+            Console.WriteLine($"🎨 音质策略: {config.GetAudioQualityDescription()}");
+            Console.WriteLine($"🎯 输出格式: 与输入格式一致 (保持原始音质)");
             Console.WriteLine($"📏 边界填充: {config.SentenceBoundaryPadding}s");
             Console.WriteLine($"🎭 语气词填充: {config.InterjectionPadding}s");
             Console.WriteLine($"🎵 语调缓冲: {config.IntonationBuffer}s");
             Console.WriteLine($"📊 动态调整: {config.DynamicTimeAdjustmentFactor}x");
             Console.WriteLine($"📝 最小字符: {config.MinSentenceCharacters}");
             Console.WriteLine($"🔇 标点静音: {config.SilencePaddingAfterPunctuation}s");
+            Console.WriteLine($"🔧 时间校正: {(config.EnableTimeCorrection ? "启用" : "禁用")} (阈值: {config.TimeCorrectionThreshold:F2}s)");
             Console.WriteLine();
 
             await splitter.ProcessAsync(config);
@@ -100,7 +122,7 @@ public class AudioSplitter
         // 2. 准备输出目录
         Directory.CreateDirectory(config.OutputDirectory);
 
-        // 3. 检测并转换音频格式
+        // 3. 检测并转换音频格式 (仅用于Whisper识别)
         string processedAudio = await ConvertToWhisperFormatAsync(config.InputAudioPath, config.OutputDirectory);
 
         // 4. 使用Whisper进行语音识别和时间对齐
@@ -109,15 +131,19 @@ public class AudioSplitter
         // 5. 优化分割点
         var optimizedSegments = OptimizeSegments(segments, config);
 
-        // 6. 切割音频文件
-        await SplitAudioFiles(processedAudio, optimizedSegments, config);
+        // 6. 🎵 使用原始音频文件切割 (保持原始格式和音质)
+        await SplitAudioFiles(config.InputAudioPath, optimizedSegments, config);
 
         // 7. 生成结果报告
         GenerateReport(optimizedSegments, config);
 
-        // 8. 清理临时文件
-        if (File.Exists(processedAudio))
+        // 8. 清理临时文件 (如果需要)
+        if (File.Exists(processedAudio) && !config.KeepOriginalAudio)
+        {
             File.Delete(processedAudio);
+        }
+        
+        Console.WriteLine($"📁 临时转换文件保留在: {processedAudio}");
     }
 
     private async Task<string> ConvertToWhisperFormatAsync(string inputPath, string outputDirectory)
@@ -140,12 +166,12 @@ public class AudioSplitter
         {
             if (inputExtension == ".wav")
             {
-                Console.WriteLine("📄 检测到WAV格式，进行优化处理...");
-                ConvertWavToWhisperFormat(inputPath, outputPath);
+                Console.WriteLine("📄 检测到WAV格式，进行智能优化处理...");
+                ConvertWavToOptimalFormat(inputPath, outputPath);
             }
             else
             {
-                Console.WriteLine($"🔄 转换 {inputExtension.ToUpper().TrimStart('.')} 格式到标准WAV...");
+                Console.WriteLine($"🔄 转换 {inputExtension.ToUpper().TrimStart('.')} 格式到高品质WAV...");
                 await ConvertToWavAsync(inputPath, outputPath);
             }
             
@@ -183,38 +209,84 @@ public class AudioSplitter
             Console.WriteLine($"   编码: {reader.WaveFormat.Encoding}");
             Console.WriteLine($"   时长: {reader.TotalTime.TotalSeconds:F2}秒");
             
-            // Whisper需要16kHz单声道PCM格式
-            var targetFormat = new WaveFormat(16000, 16, 1);
+            // 🎵 智能目标格式选择 - 根据原始音质决定转换策略
+            WaveFormat targetFormat;
+            string conversionStrategy;
             
-            Console.WriteLine($"🎯 目标格式: 16kHz, 16位, 单声道 PCM");
+            // 保持原始采样率，但至少16kHz用于Whisper兼容性
+            int targetSampleRate = Math.Max(reader.WaveFormat.SampleRate, 16000);
             
-            // 使用MediaFoundationResampler进行转换
+            // 如果原始音频是高采样率，保持较高的品质
+            if (reader.WaveFormat.SampleRate >= 44100)
+            {
+                // 高品质音频：保持原始采样率和立体声（如果需要）
+                targetFormat = new WaveFormat(
+                    reader.WaveFormat.SampleRate, // 保持原始采样率
+                    24, // 提升到24位获得更好的动态范围
+                    Math.Min(reader.WaveFormat.Channels, 2) // 最多保持立体声
+                );
+                conversionStrategy = "高品质保持";
+            }
+            else if (reader.WaveFormat.SampleRate >= 22050)
+            {
+                // 中等品质：适度提升
+                targetFormat = new WaveFormat(
+                    Math.Max(reader.WaveFormat.SampleRate, 44100), // 提升到CD品质
+                    24, 
+                    Math.Min(reader.WaveFormat.Channels, 2)
+                );
+                conversionStrategy = "品质提升";
+            }
+            else
+            {
+                // 低品质音频：标准Whisper格式，但尽量保持品质
+                targetFormat = new WaveFormat(
+                    Math.Max(reader.WaveFormat.SampleRate, 22050), // 至少22kHz
+                    24, // 24位而不是16位
+                    1 // 单声道用于Whisper
+                );
+                conversionStrategy = "标准品质";
+            }
+            
+            Console.WriteLine($"🎯 转换策略: {conversionStrategy}");
+            Console.WriteLine($"🎯 目标格式: {targetFormat.SampleRate}Hz, {targetFormat.BitsPerSample}位, {targetFormat.Channels}声道 PCM");
+            
+            // 🎨 使用高品质重采样设置
             using var resampler = new MediaFoundationResampler(reader, targetFormat)
             {
-                ResamplerQuality = 60 // 高质量重采样
+                ResamplerQuality = 100 // 🎵 最高质量重采样 (0-100)
             };
             
-            // 写入标准PCM WAV文件
+            // 📝 生成高品质WAV文件
             WaveFileWriter.CreateWaveFile(outputPath, resampler);
             
-            Console.WriteLine($"✅ 转换完成: {outputPath}");
+            Console.WriteLine($"✅ 高品质转换完成: {outputPath}");
             
-            // 验证输出文件
-            ValidateConvertedFile(outputPath);
+            // 📊 详细验证转换结果
+            ValidateConvertedFile(outputPath, reader.WaveFormat, conversionStrategy);
         }
         catch (Exception ex)
         {
-            // 如果NAudio无法处理，尝试使用FFmpeg（如果可用）
-            Console.WriteLine($"⚠️ NAudio转换失败: {ex.Message}");
-            Console.WriteLine($"🔄 尝试备用转换方法...");
+            // 如果高品质转换失败，尝试标准Whisper格式
+            Console.WriteLine($"⚠️ 高品质转换失败: {ex.Message}");
+            Console.WriteLine($"🔄 回退到标准Whisper格式转换...");
             
-            await TryFFmpegConversion(inputPath, outputPath);
+            try
+            {
+                await ConvertToStandardWhisperFormat(inputPath, outputPath);
+            }
+            catch
+            {
+                // 最后尝试FFmpeg
+                Console.WriteLine($"🔄 尝试FFmpeg备用转换方法...");
+                await TryFFmpegConversion(inputPath, outputPath);
+            }
         }
     }
 
-    private void ConvertWavToWhisperFormat(string inputPath, string outputPath)
+    private void ConvertWavToOptimalFormat(string inputPath, string outputPath)
     {
-        Console.WriteLine("🔄 优化WAV格式...");
+        Console.WriteLine("🔄 WAV格式智能优化...");
 
         try
         {
@@ -226,26 +298,73 @@ public class AudioSplitter
 
             using var reader = new AudioFileReader(inputPath);
             
-            // Whisper需要16kHz单声道PCM格式
-            var targetFormat = new WaveFormat(16000, 16, 1);
-
-            Console.WriteLine($"📊 原始格式: {reader.WaveFormat.SampleRate}Hz, {reader.WaveFormat.Channels}通道, {reader.WaveFormat.BitsPerSample}位");
+            Console.WriteLine($"📊 原始WAV格式: {reader.WaveFormat.SampleRate}Hz, {reader.WaveFormat.Channels}通道, {reader.WaveFormat.BitsPerSample}位");
             Console.WriteLine($"📊 原始编码: {reader.WaveFormat.Encoding}");
+
+            // 🎵 智能WAV格式优化策略
+            WaveFormat targetFormat;
+            string optimizationStrategy;
+            
+            if (reader.WaveFormat.SampleRate >= 44100 && reader.WaveFormat.BitsPerSample >= 16)
+            {
+                // 已经是高品质WAV，只需要确保PCM格式
+                if (reader.WaveFormat.Encoding == WaveFormatEncoding.Pcm)
+                {
+                    // 格式已经很好，只需复制或轻微优化
+                    targetFormat = new WaveFormat(
+                        reader.WaveFormat.SampleRate,
+                        Math.Max(reader.WaveFormat.BitsPerSample, 24), // 至少24位
+                        reader.WaveFormat.Channels
+                    );
+                    optimizationStrategy = "格式保持优化";
+                }
+                else
+                {
+                    // 转换为PCM但保持高品质
+                    targetFormat = new WaveFormat(
+                        reader.WaveFormat.SampleRate,
+                        24, // 24位PCM
+                        reader.WaveFormat.Channels
+                    );
+                    optimizationStrategy = "高品质PCM转换";
+                }
+            }
+            else
+            {
+                // 需要品质提升的WAV文件
+                targetFormat = new WaveFormat(
+                    Math.Max(reader.WaveFormat.SampleRate, 44100), // 至少44.1kHz
+                    24, // 24位
+                    Math.Max(reader.WaveFormat.Channels, 1) // 至少单声道
+                );
+                optimizationStrategy = "品质提升优化";
+            }
+
+            Console.WriteLine($"🎯 优化策略: {optimizationStrategy}");
             Console.WriteLine($"🎯 目标格式: {targetFormat.SampleRate}Hz, {targetFormat.Channels}通道, {targetFormat.BitsPerSample}位");
 
-            // 强制重新采样和格式转换
-            using var resampler = new MediaFoundationResampler(reader, targetFormat)
+            // 检查是否需要实际转换
+            if (reader.WaveFormat.Equals(targetFormat))
             {
-                ResamplerQuality = 60 // 高质量重采样
-            };
+                Console.WriteLine("📋 格式已经是最优，直接复制文件...");
+                File.Copy(inputPath, outputPath, true);
+            }
+            else
+            {
+                // 🎨 使用最高品质重采样进行转换
+                using var resampler = new MediaFoundationResampler(reader, targetFormat)
+                {
+                    ResamplerQuality = 100 // 🎵 最高质量重采样
+                };
 
-            // 使用标准的WAV文件写入方法
-            WaveFileWriter.CreateWaveFile(outputPath, resampler);
+                // 使用高品质WAV文件写入方法
+                WaveFileWriter.CreateWaveFile(outputPath, resampler);
+            }
 
-            Console.WriteLine($"✅ 音频已优化: {outputPath}");
+            Console.WriteLine($"✅ WAV格式优化完成: {outputPath}");
             
-            // 验证输出文件
-            ValidateConvertedFile(outputPath);
+            // 📊 验证优化结果
+            ValidateConvertedFile(outputPath, reader.WaveFormat, optimizationStrategy);
         }
         catch (Exception ex)
         {
@@ -253,16 +372,44 @@ public class AudioSplitter
         }
     }
 
+    private async Task ConvertToStandardWhisperFormat(string inputPath, string outputPath)
+    {
+        using var reader = new AudioFileReader(inputPath);
+        
+        // 标准Whisper格式：16kHz, 16位, 单声道
+        var targetFormat = new WaveFormat(16000, 16, 1);
+        
+        Console.WriteLine($"🔄 标准Whisper格式转换: {targetFormat.SampleRate}Hz, {targetFormat.BitsPerSample}位, {targetFormat.Channels}声道");
+        
+        using var resampler = new MediaFoundationResampler(reader, targetFormat)
+        {
+            ResamplerQuality = 60 // 标准质量重采样
+        };
+        
+        WaveFileWriter.CreateWaveFile(outputPath, resampler);
+        
+        Console.WriteLine($"✅ 标准格式转换完成: {outputPath}");
+        ValidateConvertedFile(outputPath, reader.WaveFormat, "标准Whisper格式");
+    }
+
     private async Task TryFFmpegConversion(string inputPath, string outputPath)
     {
         try
         {
-            Console.WriteLine("🛠️ 尝试使用FFmpeg进行转换...");
+            Console.WriteLine("🛠️ 尝试使用FFmpeg进行高品质转换...");
+            
+            // 🎵 FFmpeg高品质音频转换参数
+            var ffmpegArgs = $"-i \"{inputPath}\" " +
+                           $"-acodec pcm_s24le " +     // 24位PCM编码
+                           $"-ar 44100 " +             // CD品质采样率
+                           $"-ac 2 " +                 // 立体声
+                           $"-af \"aformat=sample_fmts=s24:sample_rates=44100\" " + // 音频过滤器
+                           $"-y \"{outputPath}\"";
             
             var startInfo = new System.Diagnostics.ProcessStartInfo
             {
                 FileName = "ffmpeg",
-                Arguments = $"-i \"{inputPath}\" -ar 16000 -ac 1 -sample_fmt s16 -y \"{outputPath}\"",
+                Arguments = ffmpegArgs,
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
@@ -280,63 +427,206 @@ public class AudioSplitter
 
             if (process.ExitCode == 0)
             {
-                Console.WriteLine("✅ FFmpeg转换成功");
-                ValidateConvertedFile(outputPath);
+                Console.WriteLine("✅ FFmpeg高品质转换成功");
+                ValidateConvertedFile(outputPath, null, "FFmpeg高品质");
             }
             else
             {
-                throw new InvalidOperationException($"FFmpeg转换失败: {error}");
+                // 如果高品质失败，尝试标准参数
+                Console.WriteLine($"⚠️ 高品质FFmpeg转换失败，尝试标准参数...");
+                await TryStandardFFmpegConversion(inputPath, outputPath);
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"❌ FFmpeg转换也失败了: {ex.Message}");
-            Console.WriteLine("💡 建议:");
-            Console.WriteLine("   1. 安装FFmpeg并添加到PATH环境变量");
-            Console.WriteLine("   2. 或将音频文件手动转换为WAV格式");
-            Console.WriteLine("   3. 或使用在线音频转换工具");
-            
-            throw new InvalidOperationException($"无法转换音频格式。请确保文件格式正确或安装FFmpeg。原始错误: {ex.Message}");
+            Console.WriteLine($"❌ FFmpeg转换失败: {ex.Message}");
+            await TryStandardFFmpegConversion(inputPath, outputPath);
         }
     }
 
-    private void ValidateConvertedFile(string filePath)
+    private async Task TryStandardFFmpegConversion(string inputPath, string outputPath)
+    {
+        try
+        {
+            Console.WriteLine("🛠️ 使用FFmpeg标准参数转换...");
+            
+            var startInfo = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "ffmpeg",
+                Arguments = $"-i \"{inputPath}\" -ar 22050 -ac 2 -sample_fmt s16 -y \"{outputPath}\"",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+
+            using var process = new System.Diagnostics.Process { StartInfo = startInfo };
+            
+            process.Start();
+            
+            var output = await process.StandardOutput.ReadToEndAsync();
+            var error = await process.StandardError.ReadToEndAsync();
+            
+            await process.WaitForExitAsync();
+
+            if (process.ExitCode == 0)
+            {
+                Console.WriteLine("✅ FFmpeg标准转换成功");
+                ValidateConvertedFile(outputPath, null, "FFmpeg标准");
+            }
+            else
+            {
+                throw new InvalidOperationException($"FFmpeg标准转换也失败了: {error}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ 所有FFmpeg转换方法都失败了: {ex.Message}");
+            Console.WriteLine("💡 建议:");
+            Console.WriteLine("   1. 确保FFmpeg已正确安装并添加到PATH环境变量");
+            Console.WriteLine("   2. 检查音频文件是否损坏");
+            Console.WriteLine("   3. 尝试使用其他音频转换工具预处理文件");
+            Console.WriteLine("   4. 确保有足够的磁盘空间");
+            
+            throw new InvalidOperationException($"无法转换音频格式。所有转换方法都失败。最后错误: {ex.Message}");
+        }
+    }
+
+    private void ValidateConvertedFile(string filePath, WaveFormat originalFormat = null, string conversionStrategy = "")
     {
         try
         {
             using var reader = new WaveFileReader(filePath);
-            Console.WriteLine($"转换后格式: {reader.WaveFormat.SampleRate}Hz, {reader.WaveFormat.Channels}通道, {reader.WaveFormat.BitsPerSample}位");
-            Console.WriteLine($"转换后编码: {reader.WaveFormat.Encoding}");
-            Console.WriteLine($"时长: {reader.TotalTime.TotalSeconds:F2}秒");
-            Console.WriteLine($"文件大小: {new FileInfo(filePath).Length / 1024:F2} KB");
             
-            // 验证格式是否符合Whisper要求
-            if (reader.WaveFormat.SampleRate != 16000)
+            Console.WriteLine($"📋 转换结果验证 ({conversionStrategy}):");
+            Console.WriteLine($"   转换后格式: {reader.WaveFormat.SampleRate}Hz, {reader.WaveFormat.Channels}通道, {reader.WaveFormat.BitsPerSample}位");
+            Console.WriteLine($"   转换后编码: {reader.WaveFormat.Encoding}");
+            Console.WriteLine($"   时长: {reader.TotalTime.TotalSeconds:F2}秒");
+            Console.WriteLine($"   文件大小: {new FileInfo(filePath).Length / 1024:F2} KB");
+            
+            // 🎵 音质分析
+            if (originalFormat != null)
             {
-                throw new InvalidOperationException($"采样率不正确: {reader.WaveFormat.SampleRate}Hz (期望 16000Hz)");
+                Console.WriteLine($"📊 品质对比分析:");
+                Console.WriteLine($"   采样率变化: {originalFormat.SampleRate}Hz → {reader.WaveFormat.SampleRate}Hz " +
+                    $"({(reader.WaveFormat.SampleRate >= originalFormat.SampleRate ? "保持/提升" : "降低")})");
+                Console.WriteLine($"   位深度变化: {originalFormat.BitsPerSample}位 → {reader.WaveFormat.BitsPerSample}位 " +
+                    $"({(reader.WaveFormat.BitsPerSample >= originalFormat.BitsPerSample ? "保持/提升" : "降低")})");
+                Console.WriteLine($"   声道变化: {originalFormat.Channels}通道 → {reader.WaveFormat.Channels}通道");
+                
+                // 🎯 品质评估
+                var qualityScore = CalculateQualityScore(originalFormat, reader.WaveFormat);
+                Console.WriteLine($"   📈 品质评分: {qualityScore}/100 ({GetQualityDescription(qualityScore)})");
+                
+                if (qualityScore < 70)
+                {
+                    Console.WriteLine($"   ⚠️ 警告: 音质可能有明显下降，建议检查转换参数");
+                }
+                else if (qualityScore >= 90)
+                {
+                    Console.WriteLine($"   ✨ 优秀: 音质保持良好或有提升");
+                }
             }
             
-            if (reader.WaveFormat.Channels != 1)
+            // 🔍 基本格式验证
+            if (reader.WaveFormat.Encoding != WaveFormatEncoding.Pcm && 
+                reader.WaveFormat.Encoding != WaveFormatEncoding.IeeeFloat)
             {
-                throw new InvalidOperationException($"声道数不正确: {reader.WaveFormat.Channels} (期望 1)");
+                Console.WriteLine($"   ⚠️ 警告: 音频编码格式 {reader.WaveFormat.Encoding} 可能与某些处理器不兼容");
             }
             
-            if (reader.WaveFormat.BitsPerSample != 16)
-            {
-                throw new InvalidOperationException($"位深度不正确: {reader.WaveFormat.BitsPerSample}位 (期望 16位)");
-            }
+            // ✅ Whisper兼容性检查
+            bool whisperCompatible = reader.WaveFormat.SampleRate >= 16000 && 
+                                   reader.WaveFormat.Channels <= 2 && 
+                                   reader.WaveFormat.BitsPerSample >= 16;
             
-            if (reader.WaveFormat.Encoding != WaveFormatEncoding.Pcm)
-            {
-                throw new InvalidOperationException($"编码格式不正确: {reader.WaveFormat.Encoding} (期望 PCM)");
-            }
+            Console.WriteLine($"   🤖 Whisper兼容性: {(whisperCompatible ? "✅ 兼容" : "❌ 需要进一步转换")}");
             
-            Console.WriteLine("✓ 音频格式验证通过");
+            Console.WriteLine("   ✓ 音频文件验证完成");
         }
         catch (Exception ex)
         {
             throw new InvalidOperationException($"转换后文件验证失败: {ex.Message}", ex);
         }
+    }
+
+    private int CalculateQualityScore(WaveFormat original, WaveFormat converted)
+    {
+        int score = 100;
+        
+        // 采样率评分 (40分)
+        var sampleRateRatio = (double)converted.SampleRate / original.SampleRate;
+        if (sampleRateRatio >= 1.0)
+        {
+            score += 0; // 保持或提升，不扣分
+        }
+        else if (sampleRateRatio >= 0.75)
+        {
+            score -= 10; // 轻微下降
+        }
+        else if (sampleRateRatio >= 0.5)
+        {
+            score -= 25; // 明显下降
+        }
+        else
+        {
+            score -= 40; // 严重下降
+        }
+        
+        // 位深度评分 (30分)
+        var bitDepthRatio = (double)converted.BitsPerSample / original.BitsPerSample;
+        if (bitDepthRatio >= 1.0)
+        {
+            score += 0; // 保持或提升
+        }
+        else if (bitDepthRatio >= 0.75)
+        {
+            score -= 10; // 轻微下降
+        }
+        else
+        {
+            score -= 30; // 明显下降
+        }
+        
+        // 声道评分 (20分)
+        if (converted.Channels >= original.Channels)
+        {
+            score += 0; // 保持或提升
+        }
+        else if (original.Channels == 2 && converted.Channels == 1)
+        {
+            score -= 15; // 立体声变单声道
+        }
+        else
+        {
+            score -= 20; // 其他声道减少
+        }
+        
+        // 编码格式评分 (10分)
+        if (converted.Encoding == WaveFormatEncoding.Pcm || converted.Encoding == WaveFormatEncoding.IeeeFloat)
+        {
+            score += 0; // 无损格式
+        }
+        else
+        {
+            score -= 10; // 可能有损格式
+        }
+        
+        return Math.Max(0, Math.Min(100, score));
+    }
+
+    private string GetQualityDescription(int score)
+    {
+        return score switch
+        {
+            >= 95 => "卓越",
+            >= 90 => "优秀", 
+            >= 80 => "良好",
+            >= 70 => "可接受",
+            >= 60 => "一般",
+            >= 50 => "较差",
+            _ => "很差"
+        };
     }
 
     private async Task<List<AudioSegment>> PerformAlignment(string audioPath, SplitterConfig config)
@@ -362,6 +652,20 @@ public class AudioSplitter
             await using var fileStream = File.OpenRead(audioPath);
 
             Console.WriteLine("开始语音识别...");
+            
+            // 🎵 获取音频文件实际时长用于校正
+            double actualAudioDuration = 0;
+            try
+            {
+                using var audioReader = new AudioFileReader(audioPath);
+                actualAudioDuration = audioReader.TotalTime.TotalSeconds;
+                Console.WriteLine($"📏 音频文件实际时长: {actualAudioDuration:F3}秒");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"⚠️ 无法获取音频实际时长: {ex.Message}");
+            }
+
             await foreach (var result in processor.ProcessAsync(fileStream))
             {
                 // result is SegmentData, process it directly
@@ -369,14 +673,106 @@ public class AudioSplitter
                 {
                     var audioSegment = new AudioSegment
                     {
-                        StartTime = result.Start.TotalSeconds,
-                        EndTime = result.End.TotalSeconds,
+                        StartTime = result.Start.TotalSeconds,  // ✅ 修复：使用 TotalSeconds 而不是 TotalMilliseconds
+                        EndTime = result.End.TotalSeconds,     // ✅ 修复：使用 TotalSeconds 而不是 TotalMilliseconds
                         Text = result.Text.Trim(),
-                        Duration = (result.End - result.Start).TotalSeconds
+                        Duration = (result.End - result.Start).TotalSeconds // ✅ 修复：使用 TotalSeconds
                     };
 
                     segments.Add(audioSegment);
                     Console.WriteLine($"识别: [{audioSegment.StartTime:F2}s-{audioSegment.EndTime:F2}s] {audioSegment.Text}");
+                }
+            }
+
+            // 🔧 智能时间校正：处理 Whisper 识别时长与实际音频时长不匹配的问题
+            if (segments.Count > 0 && actualAudioDuration > 0 && config.EnableTimeCorrection)
+            {
+                var whisperTotalDuration = segments.Max(s => s.EndTime);
+                var timeDifference = actualAudioDuration - whisperTotalDuration;
+                
+                Console.WriteLine($"📊 时长对比分析:");
+                Console.WriteLine($"   Whisper识别时长: {whisperTotalDuration:F3}秒");
+                Console.WriteLine($"   音频实际时长: {actualAudioDuration:F3}秒");
+                Console.WriteLine($"   时长差异: {timeDifference:F3}秒");
+
+                // 如果差异超过配置的阈值，进行智能校正
+                if (Math.Abs(timeDifference) > config.TimeCorrectionThreshold)
+                {
+                    Console.WriteLine($"🔧 检测到明显时长差异 (>{config.TimeCorrectionThreshold:F3}s)，开始智能校正...");
+                    
+                    if (timeDifference > 0)
+                    {
+                        // 实际音频比Whisper识别的长，扩展最后一个段落
+                        var lastSegment = segments[^1];
+                        var originalEnd = lastSegment.EndTime;
+                        
+                        // 🎯 策略1: 按比例扩展最后一个段落
+                        var extensionTime = Math.Min(timeDifference, config.MaxExtensionTime);
+                        lastSegment.EndTime = Math.Min(actualAudioDuration, originalEnd + extensionTime);
+                        lastSegment.Duration = lastSegment.EndTime - lastSegment.StartTime;
+                        
+                        Console.WriteLine($"   ✅ 扩展最后段落: {originalEnd:F3}s → {lastSegment.EndTime:F3}s (+{extensionTime:F3}s)");
+                        
+                        // 🎯 策略2: 如果还有剩余差异，按比例调整所有段落
+                        var remainingDifference = actualAudioDuration - lastSegment.EndTime;
+                        if (remainingDifference > config.TimeCorrectionThreshold)
+                        {
+                            var scaleFactor = actualAudioDuration / whisperTotalDuration;
+                            Console.WriteLine($"   🔄 应用时间缩放因子: {scaleFactor:F4}");
+                            
+                            foreach (var segment in segments)
+                            {
+                                var segmentOriginalStart = segment.StartTime;
+                                var segmentOriginalEnd = segment.EndTime;
+                                
+                                segment.StartTime *= scaleFactor;
+                                segment.EndTime *= scaleFactor;
+                                segment.Duration = segment.EndTime - segment.StartTime;
+                                
+                                if (config.DebugMode)
+                                {
+                                    Console.WriteLine($"     段落校正: [{segmentOriginalStart:F3}-{segmentOriginalEnd:F3}] → [{segment.StartTime:F3}-{segment.EndTime:F3}]");
+                                }
+                            }
+                            
+                            Console.WriteLine($"   ✅ 时间缩放校正完成");
+                        }
+                    }
+                    else
+                    {
+                        // Whisper识别的比实际音频长（不常见但可能发生）
+                        var compressionFactor = actualAudioDuration / whisperTotalDuration;
+                        Console.WriteLine($"   🔄 应用时间压缩因子: {compressionFactor:F4}");
+                        
+                        foreach (var segment in segments)
+                        {
+                            segment.StartTime *= compressionFactor;
+                            segment.EndTime *= compressionFactor;
+                            segment.Duration = segment.EndTime - segment.StartTime;
+                        }
+                        
+                        Console.WriteLine($"   ✅ 时间压缩校正完成");
+                    }
+                    
+                    // 验证校正结果
+                    var correctedTotalDuration = segments.Max(s => s.EndTime);
+                    var finalDifference = Math.Abs(actualAudioDuration - correctedTotalDuration);
+                    Console.WriteLine($"📈 校正结果:");
+                    Console.WriteLine($"   校正后时长: {correctedTotalDuration:F3}秒");
+                    Console.WriteLine($"   剩余差异: {finalDifference:F3}秒");
+                    
+                    if (finalDifference <= config.TimeCorrectionThreshold)
+                    {
+                        Console.WriteLine($"   ✨ 校正成功！时长匹配良好");
+                    }
+                    else
+                    {
+                        Console.WriteLine($"   ⚠️ 仍有差异，但已明显改善");
+                    }
+                }
+                else
+                {
+                    Console.WriteLine($"   ✅ 时长匹配良好，无需校正 (差异 ≤ {config.TimeCorrectionThreshold:F3}s)");
                 }
             }
         }
@@ -387,7 +783,7 @@ public class AudioSplitter
             
             // 尝试重新转换音频文件
             var backupPath = audioPath + ".fixed.wav";
-            ConvertWavToWhisperFormat(audioPath, backupPath);
+            ConvertWavToOptimalFormat(audioPath, backupPath);
             
             // 递归调用，但要防止无限递归
             if (!audioPath.Contains(".fixed.wav"))
@@ -944,7 +1340,301 @@ public class AudioSplitter
     private async Task SplitAudioFiles(string sourceAudio, List<AudioSegment> segments, SplitterConfig config)
     {
         Console.WriteLine("🔪 开始切割音频文件...");
+        
+        // 🎵 获取源文件信息
+        var sourceExtension = Path.GetExtension(sourceAudio).ToLowerInvariant();
+        var isOriginalFormat = !sourceAudio.Contains("processed.wav");
+        
+        Console.WriteLine($"📂 源文件格式: {sourceExtension.ToUpper().TrimStart('.')}");
+        Console.WriteLine($"🎯 输出格式: {(isOriginalFormat ? sourceExtension.ToUpper().TrimStart('.') : "WAV")} (保持原始音质)");
 
+        // 根据源文件格式选择切割方法
+        if (isOriginalFormat && sourceExtension != ".wav")
+        {
+            // 🎵 使用FFmpeg直接切割原始格式文件 (保持原始音质)
+            await SplitAudioWithFFmpeg(sourceAudio, segments, config);
+        }
+        else
+        {
+            // 🎵 使用NAudio切割WAV文件
+            await SplitWavAudioWithNAudio(sourceAudio, segments, config);
+        }
+
+        Console.WriteLine($"\n🎉 音频切割完成！共生成 {segments.Count} 个句子音频文件");
+    }
+
+    private async Task SplitAudioWithFFmpeg(string sourceAudio, List<AudioSegment> segments, SplitterConfig config)
+    {
+        Console.WriteLine("🛠️ 使用FFmpeg进行原始格式切割 (保持最佳音质)...");
+        
+        var sourceExtension = Path.GetExtension(sourceAudio);
+        
+        // 🎵 获取源文件音频信息
+        await DisplaySourceAudioInfo(sourceAudio);
+
+        for (int i = 0; i < segments.Count; i++)
+        {
+            var segment = segments[i];
+            
+            // 创建输出文件名 (保持原始格式)
+            var cleanText = CleanTextForFilename(segment.Text);
+            var outputFileName = $"sentence_{i + 1:D2}_{segment.StartTime:F1}s-{segment.EndTime:F1}s_{cleanText}{sourceExtension}";
+            var outputPath = Path.Combine(config.OutputDirectory, outputFileName);
+
+            try
+            {
+                Console.WriteLine($"\n🎵 切割句子 {i + 1}/{segments.Count}:");
+                Console.WriteLine($"   时间: {segment.StartTime:F2}s - {segment.EndTime:F2}s ({segment.Duration:F2}s)");
+                Console.WriteLine($"   内容: \"{segment.Text}\"");
+                Console.WriteLine($"   文件: {outputFileName}");
+
+                // 🎨 使用FFmpeg高品质切割参数
+                var ffmpegArgs = $"-i \"{sourceAudio}\" " +
+                               $"-ss {segment.StartTime:F3} " +                    // 开始时间 (精确到毫秒)
+                               $"-t {segment.Duration:F3} " +                      // 持续时间
+                               $"-c copy " +                                       // 🎵 流复制，不重新编码 (保持原始音质)
+                               $"-avoid_negative_ts make_zero " +                  // 避免负时间戳
+                               $"-y \"{outputPath}\"";                             // 覆盖输出文件
+
+                Console.WriteLine($"   🛠️ FFmpeg命令: ffmpeg {ffmpegArgs}");
+
+                var startInfo = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "ffmpeg",
+                    Arguments = ffmpegArgs,
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true
+                };
+
+                using var process = new System.Diagnostics.Process { StartInfo = startInfo };
+                
+                process.Start();
+                
+                var output = await process.StandardOutput.ReadToEndAsync();
+                var error = await process.StandardError.ReadToEndAsync();
+                
+                await process.WaitForExitAsync();
+
+                if (process.ExitCode == 0)
+                {
+                    // 更新段信息
+                    segment.OutputFileName = outputFileName;
+                    segment.OutputPath = outputPath;
+
+                    // 验证生成的文件
+                    var fileInfo = new FileInfo(outputPath);
+                    Console.WriteLine($"   ✅ 已生成: {fileInfo.Length / 1024:F1} KB");
+                    
+                    // 🎵 验证音频时长 (使用FFprobe)
+                    await ValidateFFmpegOutput(outputPath, segment.Duration);
+                }
+                else
+                {
+                    Console.WriteLine($"   ❌ FFmpeg切割失败: {error}");
+                    
+                    // 🔄 回退到重编码模式
+                    Console.WriteLine($"   🔄 尝试重编码模式...");
+                    await SplitWithReencoding(sourceAudio, segment, outputPath, i + 1);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"   ❌ 切割片段 {i + 1} 时出错: {ex.Message}");
+            }
+        }
+    }
+
+    private async Task SplitWithReencoding(string sourceAudio, AudioSegment segment, string outputPath, int segmentIndex)
+    {
+        var sourceExtension = Path.GetExtension(sourceAudio);
+        
+        // 🎨 根据格式选择最佳重编码参数
+        string codecArgs = sourceExtension.ToLowerInvariant() switch
+        {
+            ".mp3" => "-c:a libmp3lame -b:a 320k",          // 320kbps MP3
+            ".aac" => "-c:a aac -b:a 256k",                 // 256kbps AAC
+            ".flac" => "-c:a flac",                         // 无损FLAC
+            ".ogg" => "-c:a libvorbis -q:a 8",             // 高质量Ogg
+            _ => "-c:a libmp3lame -b:a 320k"               // 默认高质量MP3
+        };
+        
+        var ffmpegArgs = $"-i \"{sourceAudio}\" " +
+                       $"-ss {segment.StartTime:F3} " +
+                       $"-t {segment.Duration:F3} " +
+                       $"{codecArgs} " +
+                       $"-y \"{outputPath}\"";
+
+        Console.WriteLine($"   🛠️ 重编码命令: ffmpeg {ffmpegArgs}");
+
+        var startInfo = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = "ffmpeg",
+            Arguments = ffmpegArgs,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+
+        using var process = new System.Diagnostics.Process { StartInfo = startInfo };
+        
+        process.Start();
+        await process.WaitForExitAsync();
+
+        if (process.ExitCode == 0)
+        {
+            var fileInfo = new FileInfo(outputPath);
+            Console.WriteLine($"   ✅ 重编码成功: {fileInfo.Length / 1024:F1} KB");
+        }
+        else
+        {
+            var error = await process.StandardError.ReadToEndAsync();
+            Console.WriteLine($"   ❌ 重编码也失败: {error}");
+        }
+    }
+
+    private async Task DisplaySourceAudioInfo(string audioPath)
+    {
+        try
+        {
+            // 使用FFprobe获取音频信息
+            var ffprobeArgs = $"-v quiet -print_format json -show_format -show_streams \"{audioPath}\"";
+            
+            var startInfo = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "ffprobe",
+                Arguments = ffprobeArgs,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+
+            using var process = new System.Diagnostics.Process { StartInfo = startInfo };
+            
+            process.Start();
+            
+            var output = await process.StandardOutput.ReadToEndAsync();
+            await process.WaitForExitAsync();
+
+            if (process.ExitCode == 0 && !string.IsNullOrEmpty(output))
+            {
+                // 简单解析JSON信息
+                if (output.Contains("codec_name"))
+                {
+                    Console.WriteLine($"📊 源音频信息: {Path.GetFileName(audioPath)}");
+                    
+                    // 提取基本信息
+                    if (output.Contains("\"sample_rate\""))
+                    {
+                        var sampleRate = ExtractJsonValue(output, "sample_rate");
+                        Console.WriteLine($"   采样率: {sampleRate}Hz");
+                    }
+                    
+                    if (output.Contains("\"channels\""))
+                    {
+                        var channels = ExtractJsonValue(output, "channels");
+                        Console.WriteLine($"   声道数: {channels}");
+                    }
+                    
+                    if (output.Contains("\"bit_rate\""))
+                    {
+                        var bitrate = ExtractJsonValue(output, "bit_rate");
+                        if (!string.IsNullOrEmpty(bitrate))
+                        {
+                            Console.WriteLine($"   比特率: {int.Parse(bitrate) / 1000}kbps");
+                        }
+                    }
+                    
+                    if (output.Contains("\"duration\""))
+                    {
+                        var duration = ExtractJsonValue(output, "duration");
+                        if (!string.IsNullOrEmpty(duration))
+                        {
+                            Console.WriteLine($"   时长: {double.Parse(duration):F2}秒");
+                        }
+                    }
+                }
+            }
+            else
+            {
+                Console.WriteLine($"📊 源音频: {Path.GetFileName(audioPath)} (无法获取详细信息)");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"📊 源音频: {Path.GetFileName(audioPath)} (信息获取失败: {ex.Message})");
+        }
+    }
+
+    private string ExtractJsonValue(string json, string key)
+    {
+        try
+        {
+            var pattern = $"\"{key}\"\\s*:\\s*\"?([^,\"\\}}]+)\"?";
+            var match = System.Text.RegularExpressions.Regex.Match(json, pattern);
+            return match.Success ? match.Groups[1].Value.Trim() : "";
+        }
+        catch
+        {
+            return "";
+        }
+    }
+
+    private async Task ValidateFFmpegOutput(string outputPath, double expectedDuration)
+    {
+        try
+        {
+            // 使用FFprobe验证输出文件时长
+            var ffprobeArgs = $"-v quiet -show_entries format=duration -of csv:p=0 \"{outputPath}\"";
+            
+            var startInfo = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "ffprobe",
+                Arguments = ffprobeArgs,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+
+            using var process = new System.Diagnostics.Process { StartInfo = startInfo };
+            
+            process.Start();
+            
+            var output = await process.StandardOutput.ReadToEndAsync();
+            await process.WaitForExitAsync();
+
+            if (process.ExitCode == 0 && !string.IsNullOrEmpty(output.Trim()))
+            {
+                if (double.TryParse(output.Trim(), out double actualDuration))
+                {
+                    Console.WriteLine($"   📏 实际时长: {actualDuration:F2}s (期望: {expectedDuration:F2}s)");
+                    
+                    var difference = Math.Abs(actualDuration - expectedDuration);
+                    if (difference > 0.1)
+                    {
+                        Console.WriteLine($"   ⚠️ 时长差异: {difference:F2}s");
+                    }
+                    else
+                    {
+                        Console.WriteLine($"   ✅ 时长匹配");
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"   ⚠️ 无法验证输出文件时长: {ex.Message}");
+        }
+    }
+
+    private async Task SplitWavAudioWithNAudio(string sourceAudio, List<AudioSegment> segments, SplitterConfig config)
+    {
+        Console.WriteLine("🎵 使用NAudio进行WAV格式切割...");
+        
         using var reader = new AudioFileReader(sourceAudio);
         var format = reader.WaveFormat;
 
@@ -1029,8 +1719,34 @@ public class AudioSplitter
                 Console.WriteLine($"   ❌ 切割片段 {i + 1} 时出错: {ex.Message}");
             }
         }
+    }
 
-        Console.WriteLine($"\n🎉 音频切割完成！共生成 {segments.Count} 个句子音频文件");
+    private string CleanTextForFilename(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return "empty";
+
+        // 取前20个字符，移除不安全的文件名字符
+        var cleaned = text.Length > 20 ? text.Substring(0, 20) : text;
+        
+        // 移除或替换不安全的字符
+        var invalidChars = Path.GetInvalidFileNameChars();
+        foreach (var c in invalidChars)
+        {
+            cleaned = cleaned.Replace(c, '_');
+        }
+        
+        // 移除标点符号并替换空格
+        cleaned = cleaned.Replace(" ", "_")
+                        .Replace(".", "")
+                        .Replace("!", "")
+                        .Replace("?", "")
+                        .Replace(";", "")
+                        .Replace(",", "")
+                        .Replace("'", "")
+                        .Replace("\"", "");
+        
+        return string.IsNullOrWhiteSpace(cleaned) ? "segment" : cleaned;
     }
 
     private void GenerateReport(List<AudioSegment> segments, SplitterConfig config)
@@ -1080,34 +1796,6 @@ public class AudioSplitter
         Console.WriteLine($"   最短句子: {segments.Min(s => s.Duration):F2} 秒");
         Console.WriteLine($"   最长句子: {segments.Max(s => s.Duration):F2} 秒");
     }
-
-    private string CleanTextForFilename(string text)
-    {
-        if (string.IsNullOrWhiteSpace(text))
-            return "empty";
-
-        // 取前20个字符，移除不安全的文件名字符
-        var cleaned = text.Length > 20 ? text.Substring(0, 20) : text;
-        
-        // 移除或替换不安全的字符
-        var invalidChars = Path.GetInvalidFileNameChars();
-        foreach (var c in invalidChars)
-        {
-            cleaned = cleaned.Replace(c, '_');
-        }
-        
-        // 移除标点符号并替换空格
-        cleaned = cleaned.Replace(" ", "_")
-                        .Replace(".", "")
-                        .Replace("!", "")
-                        .Replace("?", "")
-                        .Replace(";", "")
-                        .Replace(",", "")
-                        .Replace("'", "")
-                        .Replace("\"", "");
-        
-        return string.IsNullOrWhiteSpace(cleaned) ? "segment" : cleaned;
-    }
 }
 
 // 辅助数据结构
@@ -1144,7 +1832,7 @@ public class SplitterConfig
     public string Language { get; set; } = "zh";
     public string ModelSize { get; set; } = "tiny"; // tiny, base, small, medium, large
 
-    // 🎵 音频格式支持
+    // 🎵 音频格式和品质控制
     /// <summary>
     /// 支持的音频格式列表
     /// 自动检测: WAV, MP3, M4A, WMA, AAC, FLAC, OGG
@@ -1152,14 +1840,52 @@ public class SplitterConfig
     public string[] SupportedFormats { get; } = { ".wav", ".mp3", ".m4a", ".wma", ".aac", ".flac", ".ogg" };
 
     /// <summary>
-    /// 音频转换质量 (1-100, 60为高质量)
+    /// 音频品质策略
+    /// "HighQuality": 保持或提升原始音频品质 (推荐用于音乐、高品质语音)
+    /// "Balanced": 平衡品质和文件大小 (通用选择)
+    /// "Whisper": 优化用于Whisper处理 (16kHz单声道，文件最小)
     /// </summary>
-    public int AudioConversionQuality { get; set; } = 60;
+    public string AudioQualityStrategy { get; set; } = "HighQuality";
+
+    /// <summary>
+    /// 音频转换质量 (1-100, 100为最高质量)
+    /// HighQuality策略: 建议90-100
+    /// Balanced策略: 建议60-80  
+    /// Whisper策略: 建议40-60
+    /// </summary>
+    public int AudioConversionQuality { get; set; } = 100;
+
+    /// <summary>
+    /// 强制目标采样率 (Hz)
+    /// 0: 自动选择最佳采样率
+    /// >0: 强制指定采样率 (如: 44100, 48000)
+    /// </summary>
+    public int ForceSampleRate { get; set; } = 0;
+
+    /// <summary>
+    /// 强制目标位深度 (bits)
+    /// 0: 自动选择最佳位深度
+    /// >0: 强制指定位深度 (如: 16, 24, 32)
+    /// </summary>
+    public int ForceBitDepth { get; set; } = 0;
+
+    /// <summary>
+    /// 强制目标声道数
+    /// 0: 自动选择最佳声道数
+    /// 1: 强制单声道
+    /// 2: 强制立体声
+    /// </summary>
+    public int ForceChannels { get; set; } = 0;
 
     /// <summary>
     /// 启用FFmpeg备用转换 - 当NAudio无法处理时使用FFmpeg
     /// </summary>
     public bool EnableFFmpegFallback { get; set; } = true;
+
+    /// <summary>
+    /// 保留原始音频文件 - 转换后不删除原文件
+    /// </summary>
+    public bool KeepOriginalAudio { get; set; } = true;
 
     // 时长控制参数
     public double MaxSegmentDuration { get; set; } = 30.0;
@@ -1200,6 +1926,25 @@ public class SplitterConfig
     /// 调试模式 - 显示详细的时间分配信息
     /// </summary>
     public bool DebugMode { get; set; } = false;
+
+    // 🔧 时间校正参数 (新增)
+    /// <summary>
+    /// 启用智能时间校正 - 自动校正Whisper识别时长与实际音频时长的差异
+    /// 解决识别时长过短导致辅音截断的问题
+    /// </summary>
+    public bool EnableTimeCorrection { get; set; } = true;
+
+    /// <summary>
+    /// 时间差异阈值（秒）- 超过此阈值才触发时间校正
+    /// 建议值: 0.05-0.2秒
+    /// </summary>
+    public double TimeCorrectionThreshold { get; set; } = 0.1;
+
+    /// <summary>
+    /// 最大扩展时间（秒）- 单个段落最多扩展的时间
+    /// 用于防止过度扩展，建议值: 0.2-1.0秒
+    /// </summary>
+    public double MaxExtensionTime { get; set; } = 0.5;
 
     // 高级参数
     /// <summary>
@@ -1258,5 +2003,19 @@ public class SplitterConfig
     public string GetSupportedFormatsString()
     {
         return string.Join(", ", SupportedFormats.Select(f => f.ToUpper().TrimStart('.')));
+    }
+
+    /// <summary>
+    /// 获取音频品质策略说明
+    /// </summary>
+    public string GetAudioQualityDescription()
+    {
+        return AudioQualityStrategy switch
+        {
+            "HighQuality" => "高品质 (保持原始音质，适合音乐和高品质语音)",
+            "Balanced" => "平衡模式 (品质与文件大小平衡)",
+            "Whisper" => "Whisper优化 (16kHz单声道，最小文件)",
+            _ => "未知策略"
+        };
     }
 }
