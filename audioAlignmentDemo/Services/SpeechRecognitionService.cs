@@ -245,6 +245,7 @@ public class SpeechRecognitionService
 
         // 使用Whisper.net的内置下载功能
         using var httpClient = new HttpClient();
+        httpClient.Timeout = TimeSpan.FromMinutes(10); // 设置超时
         var modelUrl = GetModelDownloadUrl(modelSize);
 
         var response = await httpClient.GetAsync(modelUrl);

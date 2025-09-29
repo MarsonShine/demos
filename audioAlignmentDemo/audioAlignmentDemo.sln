@@ -5,6 +5,8 @@ VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "audioAlignmentDemo", "audioAlignmentDemo.csproj", "{AFACC436-4B7B-47C7-8CAA-1FD9B8E4EAA7}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "UserCase", "..\UserCase\UserCase.csproj", "{9323A0B2-ABC4-4BFF-84DE-D14368D20D52}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -27,8 +29,23 @@ Global
 		{AFACC436-4B7B-47C7-8CAA-1FD9B8E4EAA7}.Release|x64.Build.0 = Release|Any CPU
 		{AFACC436-4B7B-47C7-8CAA-1FD9B8E4EAA7}.Release|x86.ActiveCfg = Release|Any CPU
 		{AFACC436-4B7B-47C7-8CAA-1FD9B8E4EAA7}.Release|x86.Build.0 = Release|Any CPU
+		{9323A0B2-ABC4-4BFF-84DE-D14368D20D52}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9323A0B2-ABC4-4BFF-84DE-D14368D20D52}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9323A0B2-ABC4-4BFF-84DE-D14368D20D52}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{9323A0B2-ABC4-4BFF-84DE-D14368D20D52}.Debug|x64.Build.0 = Debug|Any CPU
+		{9323A0B2-ABC4-4BFF-84DE-D14368D20D52}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{9323A0B2-ABC4-4BFF-84DE-D14368D20D52}.Debug|x86.Build.0 = Debug|Any CPU
+		{9323A0B2-ABC4-4BFF-84DE-D14368D20D52}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9323A0B2-ABC4-4BFF-84DE-D14368D20D52}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9323A0B2-ABC4-4BFF-84DE-D14368D20D52}.Release|x64.ActiveCfg = Release|Any CPU
+		{9323A0B2-ABC4-4BFF-84DE-D14368D20D52}.Release|x64.Build.0 = Release|Any CPU
+		{9323A0B2-ABC4-4BFF-84DE-D14368D20D52}.Release|x86.ActiveCfg = Release|Any CPU
+		{9323A0B2-ABC4-4BFF-84DE-D14368D20D52}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {E88A8F9C-7618-42A3-8253-F903004FC01E}
 	EndGlobalSection
 EndGlobal

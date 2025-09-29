@@ -1,11 +1,11 @@
-using AudioAlignmentDemo.Models;
+ï»¿using AudioAlignmentDemo.Models;
 using AudioAlignmentDemo.Services;
 
 namespace AudioAlignmentDemo.Core;
 
 /// <summary>
-/// ÒôÆµ·Ö¸îÆ÷Ö÷Àà
-/// Ğ­µ÷¸÷¸ö·şÎñÍê³ÉÒôÆµ·Ö¸îÈÎÎñ
+/// éŸ³é¢‘åˆ†å‰²å™¨ä¸»ç±»
+/// åè°ƒå„ä¸ªæœåŠ¡å®ŒæˆéŸ³é¢‘åˆ†å‰²ä»»åŠ¡
 /// </summary>
 public class AudioSplitter
 {
@@ -25,7 +25,7 @@ public class AudioSplitter
     }
 
     /// <summary>
-    /// Ö´ĞĞÒôÆµ·Ö¸î´¦Àí
+    /// æ‰§è¡ŒéŸ³é¢‘åˆ†å‰²æµç¨‹
     /// </summary>
     public async Task ProcessAsync(SplitterConfig config)
     {
@@ -33,51 +33,175 @@ public class AudioSplitter
         
         try
         {
-            Console.WriteLine("?? ¿ªÊ¼ÒôÆµ·Ö¸î´¦ÀíÁ÷³Ì...\n");
+            Console.WriteLine("ğŸµ å¼€å§‹éŸ³é¢‘åˆ†å‰²æµç¨‹...\n");
             
-            // 1. ÑéÖ¤ÊäÈëÎÄ¼ş
+            // 1. éªŒè¯è¾“å…¥æ–‡ä»¶
             ValidateInputFile(config);
 
-            // 2. ×¼±¸Êä³öÄ¿Â¼
+            // 2. å‡†å¤‡è¾“å‡ºç›®å½•
             PrepareOutputDirectory(config);
 
-            // 3. ÒôÆµ¸ñÊ½×ª»» (½öÓÃÓÚWhisperÊ¶±ğ)
-            Console.WriteLine("?? ²½Öè 1/6: ÒôÆµ¸ñÊ½×ª»»");
+            // 3. éŸ³é¢‘æ ¼å¼è½¬æ¢ (å‡†å¤‡ç»™Whisperè¯†åˆ«)
+            Console.WriteLine("ğŸ”„ æ­¥éª¤ 1/6: éŸ³é¢‘æ ¼å¼è½¬æ¢");
             string processedAudio = await _conversionService.ConvertToWhisperFormatAsync(
                 config.InputAudioPath, config.OutputDirectory);
 
-            // 4. ÓïÒôÊ¶±ğºÍÊ±¼ä¶ÔÆë
-            Console.WriteLine("\n?? ²½Öè 2/6: ÓïÒôÊ¶±ğºÍÊ±¼ä¶ÔÆë");
+            // 4. è¯­éŸ³è¯†åˆ«ä¸æ—¶é—´å¯¹é½
+            Console.WriteLine("\nğŸ¤ æ­¥éª¤ 2/6: è¯­éŸ³è¯†åˆ«ä¸æ—¶é—´å¯¹é½");
             var segments = await _recognitionService.PerformAlignmentAsync(processedAudio, config);
 
-            // 5. ¾ä×Ó·ÖÎöºÍ·Ö¸îµãÓÅ»¯
-            Console.WriteLine("\n?? ²½Öè 3/6: ¾ä×Ó·ÖÎöºÍ·Ö¸îµãÓÅ»¯");
+            // ğŸ†• 5. æ—©æœŸåˆ†å‰²æ¡ä»¶æ£€æŸ¥ - é¿å…ä¸å¿…è¦çš„å¤„ç†
+            Console.WriteLine("\nğŸ” æ­¥éª¤ 3/6: åˆ†å‰²æ¡ä»¶é¢„æ£€æŸ¥");
+            bool shouldProceedWithSplitting = await PreCheckSplittingConditions(segments, config);
+            
+            if (!shouldProceedWithSplitting)
+            {
+                Console.WriteLine("âš  æ£€æµ‹åˆ°å†…å®¹ä¸éœ€è¦åˆ†å‰²ï¼Œè·³è¿‡åç»­å¤„ç†æ­¥éª¤");
+                Console.WriteLine("ğŸ’¾ ä¿å­˜å•ä¸ªå®Œæ•´éŸ³é¢‘æ–‡ä»¶...");
+                
+                // å¤åˆ¶åŸå§‹éŸ³é¢‘åˆ°è¾“å‡ºç›®å½•
+                await SaveSingleAudioFile(config);
+                
+                // ç”Ÿæˆç®€åŒ–æŠ¥å‘Š
+                GenerateSkippedProcessingReport(segments, DateTime.Now - startTime, config);
+                
+                // æ¸…ç†ä¸´æ—¶æ–‡ä»¶
+                CleanupTemporaryFiles(processedAudio, config);
+                
+                Console.WriteLine($"\nâœ… å¤„ç†å®Œæˆï¼Œæ€»è€—æ—¶: {(DateTime.Now - startTime).TotalSeconds:F1} ç§’");
+                Console.WriteLine($"ğŸ“‚ æŸ¥çœ‹ '{config.OutputDirectory}' ç›®å½•ä¸­çš„ç»“æœæ–‡ä»¶");
+                return;
+            }
+
+            // 6. å¥å­åˆ†æå’Œåˆ†å‰²ä¼˜åŒ–
+            Console.WriteLine("\nğŸ“ æ­¥éª¤ 4/6: å¥å­åˆ†æå’Œåˆ†å‰²ä¼˜åŒ–");
             var optimizedSegments = _analysisService.OptimizeSegments(segments, config);
 
-            // 6. ÒôÆµÎÄ¼şÇĞ¸î (Ê¹ÓÃÔ­Ê¼ÒôÆµÎÄ¼ş±£³ÖÒôÖÊ)
-            Console.WriteLine("\n?? ²½Öè 4/6: ÒôÆµÎÄ¼şÇĞ¸î");
+            // 7. éŸ³é¢‘æ–‡ä»¶åˆ‡å‰² (ä½¿ç”¨åŸå§‹éŸ³é¢‘æ–‡ä»¶è¿›è¡Œåˆ‡å‰²)
+            Console.WriteLine("\nâœ‚ï¸ æ­¥éª¤ 5/6: éŸ³é¢‘æ–‡ä»¶åˆ‡å‰²");
             await _splittingService.SplitAudioFilesAsync(config.InputAudioPath, optimizedSegments, config);
 
-            // 7. Éú³É½á¹û±¨¸æ
-            Console.WriteLine("\n?? ²½Öè 5/6: Éú³É½á¹û±¨¸æ");
+            // 8. ç”Ÿæˆå¤„ç†æŠ¥å‘Š
+            Console.WriteLine("\nğŸ“Š æ­¥éª¤ 6/6: ç”Ÿæˆå¤„ç†æŠ¥å‘Š");
             _reportService.GenerateReport(optimizedSegments, config);
             
-            // 8. Éú³ÉĞÔÄÜ±¨¸æ
-            Console.WriteLine("\n?? ²½Öè 6/6: ĞÔÄÜ·ÖÎö");
+            // 9. ç”Ÿæˆæ€§èƒ½åˆ†ææŠ¥å‘Š
             var processingTime = DateTime.Now - startTime;
             _reportService.GeneratePerformanceReport(optimizedSegments, processingTime, config.OutputDirectory);
 
-            // 9. ÇåÀíÁÙÊ±ÎÄ¼ş
+            // 10. æ¸…ç†ä¸´æ—¶æ–‡ä»¶
             CleanupTemporaryFiles(processedAudio, config);
             
-            Console.WriteLine($"\n?? ´¦ÀíÍê³É£¡×ÜºÄÊ±: {(DateTime.Now - startTime).TotalSeconds:F1} Ãë");
-            Console.WriteLine($"?? Çë²é¿´ '{config.OutputDirectory}' Ä¿Â¼ÖĞµÄ½á¹ûÎÄ¼ş");
+            Console.WriteLine($"\nğŸ‰ å¤„ç†å®Œæˆï¼Œæ€»è€—æ—¶: {(DateTime.Now - startTime).TotalSeconds:F1} ç§’");
+            Console.WriteLine($"ğŸ“‚ æŸ¥çœ‹ '{config.OutputDirectory}' ç›®å½•ä¸­çš„ç»“æœæ–‡ä»¶");
         }
         catch (Exception ex)
         {
             var processingTime = DateTime.Now - startTime;
-            Console.WriteLine($"\n? ´¦ÀíÊ§°Ü (ºÄÊ±: {processingTime.TotalSeconds:F1} Ãë)");
-            throw new AudioSplitterException($"ÒôÆµ·Ö¸î´¦ÀíÊ§°Ü: {ex.Message}", ex);
+            Console.WriteLine($"\nâŒ å¤„ç†å¤±è´¥ (è€—æ—¶: {processingTime.TotalSeconds:F1} ç§’)");
+            throw new AudioSplitterException($"éŸ³é¢‘åˆ†å‰²å¤±è´¥: {ex.Message}", ex);
+        }
+    }
+
+    /// <summary>
+    /// é¢„æ£€æŸ¥åˆ†å‰²æ¡ä»¶ï¼Œé¿å…ä¸å¿…è¦çš„å¤„ç†
+    /// </summary>
+    private async Task<bool> PreCheckSplittingConditions(List<AudioSegment> segments, SplitterConfig config)
+    {
+        if (!config.EnableSplitPrecheck)
+        {
+            Console.WriteLine("ğŸ“‹ åˆ†å‰²é¢„æ£€æŸ¥å·²ç¦ç”¨ï¼Œç»§ç»­å®Œæ•´å¤„ç†æµç¨‹");
+            return true;
+        }
+
+        // æ£€æŸ¥è¯†åˆ«æ®µæ•°
+        if (segments.Count < config.SkipSplitThreshold)
+        {
+            Console.WriteLine($"ğŸ“Š è¯†åˆ«ç»“æœ: {segments.Count} ä¸ªæ®µè½ (é˜ˆå€¼: {config.SkipSplitThreshold})");
+            
+            // è¿›ä¸€æ­¥æ£€æŸ¥æ–‡æœ¬å†…å®¹æ˜¯å¦éœ€è¦åˆ†å‰²
+            var strategyManager = new SplitStrategyManager();
+            bool needsSplitting = false;
+            
+            foreach (var segment in segments)
+            {
+                if (string.IsNullOrWhiteSpace(segment.Text))
+                    continue;
+                    
+                var strategy = config.SplitStrategy.ToLower() == "auto" 
+                    ? strategyManager.SelectBestStrategy(segment.Text, config)
+                    : strategyManager.GetStrategy(config.SplitStrategy);
+                    
+                if (strategy.ShouldSplit(segment.Text, config))
+                {
+                    Console.WriteLine($"âœ“ æ®µè½éœ€è¦åˆ†å‰²: \"{segment.Text.Substring(0, Math.Min(50, segment.Text.Length))}...\"");
+                    needsSplitting = true;
+                    break;
+                }
+            }
+            
+            if (!needsSplitting)
+            {
+                Console.WriteLine("ğŸš« æ‰€æœ‰æ®µè½éƒ½ä¸æ»¡è¶³åˆ†å‰²æ¡ä»¶");
+                return false;
+            }
+        }
+        
+        Console.WriteLine("âœ… æ£€æµ‹åˆ°éœ€è¦åˆ†å‰²çš„å†…å®¹ï¼Œç»§ç»­å¤„ç†");
+        return true;
+    }
+
+    /// <summary>
+    /// ä¿å­˜å•ä¸ªéŸ³é¢‘æ–‡ä»¶ï¼ˆå½“ä¸éœ€è¦åˆ†å‰²æ—¶ï¼‰
+    /// </summary>
+    private async Task SaveSingleAudioFile(SplitterConfig config)
+    {
+        try
+        {
+            var fileName = Path.GetFileNameWithoutExtension(config.InputAudioPath);
+            var extension = Path.GetExtension(config.InputAudioPath);
+            var outputPath = Path.Combine(config.OutputDirectory, $"complete_audio{extension}");
+            
+            File.Copy(config.InputAudioPath, outputPath, true);
+            Console.WriteLine($"ğŸ“ å·²ä¿å­˜å®Œæ•´éŸ³é¢‘: {outputPath}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"âš  ä¿å­˜å®Œæ•´éŸ³é¢‘æ–‡ä»¶æ—¶å‡ºé”™: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// ç”Ÿæˆè·³è¿‡å¤„ç†çš„ç®€åŒ–æŠ¥å‘Š
+    /// </summary>
+    private void GenerateSkippedProcessingReport(List<AudioSegment> segments, TimeSpan processingTime, SplitterConfig config)
+    {
+        try
+        {
+            var reportPath = Path.Combine(config.OutputDirectory, "processing_report.json");
+            var report = new
+            {
+                Status = "Skipped",
+                Reason = "Content does not require splitting",
+                ProcessingTime = processingTime.TotalSeconds,
+                OriginalSegments = segments.Count,
+                SplitStrategy = config.SplitStrategy,
+                InputFile = config.InputAudioPath,
+                OutputDirectory = config.OutputDirectory,
+                Timestamp = DateTime.Now
+            };
+            
+            var json = System.Text.Json.JsonSerializer.Serialize(report, new System.Text.Json.JsonSerializerOptions 
+            { 
+                WriteIndented = true 
+            });
+            
+            File.WriteAllText(reportPath, json);
+            Console.WriteLine($"ğŸ“‹ å·²ç”Ÿæˆå¤„ç†æŠ¥å‘Š: {reportPath}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"âš  ç”ŸæˆæŠ¥å‘Šæ—¶å‡ºé”™: {ex.Message}");
         }
     }
 
@@ -85,21 +209,21 @@ public class AudioSplitter
     {
         if (string.IsNullOrWhiteSpace(config.InputAudioPath))
         {
-            throw new ArgumentException("ÊäÈëÒôÆµÎÄ¼şÂ·¾¶²»ÄÜÎª¿Õ", nameof(config.InputAudioPath));
+            throw new ArgumentException("è¾“å…¥éŸ³é¢‘æ–‡ä»¶è·¯å¾„ä¸èƒ½ä¸ºç©º", nameof(config.InputAudioPath));
         }
 
         if (!File.Exists(config.InputAudioPath))
         {
-            throw new FileNotFoundException($"ÒôÆµÎÄ¼ş²»´æÔÚ: {config.InputAudioPath}");
+            throw new FileNotFoundException($"éŸ³é¢‘æ–‡ä»¶ä¸å­˜åœ¨: {config.InputAudioPath}");
         }
 
         var fileInfo = new FileInfo(config.InputAudioPath);
         if (fileInfo.Length == 0)
         {
-            throw new ArgumentException("ÒôÆµÎÄ¼şÎª¿Õ", nameof(config.InputAudioPath));
+            throw new ArgumentException("éŸ³é¢‘æ–‡ä»¶ä¸ºç©º", nameof(config.InputAudioPath));
         }
 
-        Console.WriteLine($"? ÊäÈëÎÄ¼şÑéÖ¤Í¨¹ı: {config.InputAudioPath} ({fileInfo.Length / 1024:F1} KB)");
+        Console.WriteLine($"? è¾“å…¥æ–‡ä»¶éªŒè¯é€šè¿‡: {config.InputAudioPath} ({fileInfo.Length / 1024:F1} KB)");
     }
 
     private void PrepareOutputDirectory(SplitterConfig config)
@@ -108,17 +232,17 @@ public class AudioSplitter
         {
             if (Directory.Exists(config.OutputDirectory))
             {
-                Console.WriteLine($"?? Êä³öÄ¿Â¼ÒÑ´æÔÚ: {config.OutputDirectory}");
+                Console.WriteLine($"?? è¾“å‡ºç›®å½•å·²å­˜åœ¨: {config.OutputDirectory}");
             }
             else
             {
                 Directory.CreateDirectory(config.OutputDirectory);
-                Console.WriteLine($"?? ´´½¨Êä³öÄ¿Â¼: {config.OutputDirectory}");
+                Console.WriteLine($"?? åˆ›å»ºè¾“å‡ºç›®å½•: {config.OutputDirectory}");
             }
         }
         catch (Exception ex)
         {
-            throw new InvalidOperationException($"ÎŞ·¨´´½¨Êä³öÄ¿Â¼ '{config.OutputDirectory}': {ex.Message}", ex);
+            throw new InvalidOperationException($"æ— æ³•åˆ›å»ºè¾“å‡ºç›®å½• '{config.OutputDirectory}': {ex.Message}", ex);
         }
     }
 
@@ -130,25 +254,25 @@ public class AudioSplitter
             {
                 if (config.KeepOriginalAudio)
                 {
-                    Console.WriteLine($"?? ±£ÁôÁÙÊ±×ª»»ÎÄ¼ş: {processedAudio}");
+                    Console.WriteLine($"?? ä¿ç•™ä¸´æ—¶è½¬æ¢æ–‡ä»¶: {processedAudio}");
                 }
                 else
                 {
                     File.Delete(processedAudio);
-                    Console.WriteLine($"??? ÇåÀíÁÙÊ±ÎÄ¼ş: {processedAudio}");
+                    Console.WriteLine($"??? æ¸…ç†ä¸´æ—¶æ–‡ä»¶: {processedAudio}");
                 }
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"?? ÇåÀíÁÙÊ±ÎÄ¼şÊ±³öÏÖÎÊÌâ: {ex.Message}");
-            // ²»Å×³öÒì³££¬ÒòÎªÕâ²»Ó°ÏìÖ÷Òª¹¦ÄÜ
+            Console.WriteLine($"?? æ¸…ç†ä¸´æ—¶æ–‡ä»¶æ—¶å‡ºç°é—®é¢˜: {ex.Message}");
+            // ä¸æŠ›å‡ºå¼‚å¸¸ï¼Œå› ä¸ºè¿™ä¸å½±å“ä¸»è¦åŠŸèƒ½
         }
     }
 }
 
 /// <summary>
-/// ÒôÆµ·Ö¸îÆ÷×¨ÓÃÒì³£Àà
+/// éŸ³é¢‘åˆ†å‰²å™¨ä¸“ç”¨å¼‚å¸¸ç±»
 /// </summary>
 public class AudioSplitterException : Exception
 {
