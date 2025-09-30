@@ -1,41 +1,41 @@
-using System.Text;
+ï»¿using System.Text;
 using AudioAlignmentDemo.Interfaces;
 using AudioAlignmentDemo.Models;
 
 namespace AudioAlignmentDemo.Strategies;
 
 /// <summary>
-/// »ùÓÚ¾ä×Ó½áÎ²·ûºÅµÄ·Ö¸î²ßÂÔ
-/// °´ÕÕ¾äºÅ¡¢ÎÊºÅ¡¢¸ĞÌ¾ºÅµÈ±êµã·ûºÅ½øĞĞ·Ö¸î
+/// åŸºäºå¥å­ç»“å°¾ç¬¦å·çš„åˆ†å‰²ç­–ç•¥
+/// æŒ‰ç…§å¥å·ã€é—®å·ã€æ„Ÿå¹å·ç­‰æ ‡ç‚¹ç¬¦å·è¿›è¡Œåˆ†å‰²
 /// </summary>
 public class SentenceEndingSplitStrategy : ISplitConditionStrategy
 {
     public string Name => "SentenceEnding";
-    public string Description => "»ùÓÚ¾ä×Ó½áÎ²·ûºÅ£¨¾äºÅ¡¢ÎÊºÅ¡¢¸ĞÌ¾ºÅµÈ£©½øĞĞ·Ö¸î";
+    public string Description => "åŸºäºå¥å­ç»“å°¾ç¬¦å·ï¼ˆå¥å·ã€é—®å·ã€æ„Ÿå¹å·ç­‰ï¼‰è¿›è¡Œåˆ†å‰²";
 
     public bool ShouldSplit(string text, SplitterConfig config)
     {
         if (string.IsNullOrWhiteSpace(text))
             return false;
 
-        // ¼ì²éÎÄ±¾³¤¶ÈÊÇ·ñ×ã¹»·Ö¸î
+        // æ£€æŸ¥æ–‡æœ¬é•¿åº¦æ˜¯å¦è¶³å¤Ÿåˆ†å‰²
         if (text.Length < config.MinSentenceCharacters * 2)
             return false;
 
-        // ¼ì²éÊÇ·ñ°üº¬¾ä×Ó½áÎ²·ûºÅ
-        var endingChars = new[] { '.', '!', '?', ';', '¡£', '£¡', '£¿', '£»' };
+        // æ£€æŸ¥æ˜¯å¦åŒ…å«å¥å­ç»“å°¾ç¬¦å·
+        var endingChars = new[] { '.', '!', '?', ';', 'ã€‚', 'ï¼', 'ï¼Ÿ', 'ï¼›' };
         bool hasEndingChars = endingChars.Any(c => text.Contains(c));
 
         if (!hasEndingChars)
             return false;
 
-        // Í³¼Æ¾ä×Ó½áÎ²·ûºÅÊıÁ¿
+        // ç»Ÿè®¡å¥å­ç»“å°¾ç¬¦å·æ•°é‡
         int endingCount = text.Count(c => endingChars.Contains(c));
         
-        // Èç¹ûÖ»ÓĞÒ»¸ö½áÎ²·ûºÅÇÒÔÚÎÄ±¾Ä©Î²£¬¿ÉÄÜ²»ĞèÒª·Ö¸î
+        // å¦‚æœåªæœ‰ä¸€ä¸ªç»“å°¾ç¬¦å·ä¸”åœ¨æ–‡æœ¬æœ«å°¾ï¼Œå¯èƒ½ä¸éœ€è¦åˆ†å‰²
         if (endingCount == 1 && endingChars.Contains(text.Trim().Last()))
         {
-            return false; // µ¥¾ä×Ó£¬²»ĞèÒª·Ö¸î
+            return false; // å•å¥å­ï¼Œä¸éœ€è¦åˆ†å‰²
         }
 
         return endingCount > 1 || (endingCount == 1 && !endingChars.Contains(text.Trim().Last()));
@@ -48,24 +48,24 @@ public class SentenceEndingSplitStrategy : ISplitConditionStrategy
         
         if (config.DebugMode)
         {
-            Console.WriteLine($"?? [DEBUG] ·ÖÎöÎÄ±¾: \"{text}\"");
-            Console.WriteLine($"?? [DEBUG] ¼ì²âµ½ {sentences.Count} ¸ö¾ä×ÓÆ¬¶Î");
+            Console.WriteLine($"ğŸ” [DEBUG] åˆ†ææ–‡æœ¬: \"{text}\"");
+            Console.WriteLine($"ğŸ” [DEBUG] æ£€æµ‹åˆ° {sentences.Count} ä¸ªå¥å­ç‰‡æ®µ");
         }
         
-        // Èç¹ûÖ»ÓĞÒ»¸ö¾ä×Ó£¬Ö±½Ó·µ»ØÔ­segment
+        // å¦‚æœåªæœ‰ä¸€ä¸ªå¥å­ï¼Œç›´æ¥è¿”å›åŸsegment
         if (sentences.Count <= 1)
         {
             if (config.DebugMode)
-                Console.WriteLine($"?? [DEBUG] µ¥¾ä×Ó£¬Ö±½Ó·µ»ØÔ­Ê¼¶ÎÂä");
+                Console.WriteLine($"ğŸ” [DEBUG] å•å¥å­ï¼Œç›´æ¥è¿”å›åŸå§‹æ®µè½");
             return new List<AudioSegment> { originalSegment };
         }
         
-        // ÖÇÄÜÊ±¼ä·ÖÅä
+        // æ™ºèƒ½æ—¶é—´åˆ†é…
         var timeAllocatedSegments = AllocateTimeToSentences(sentences, originalSegment, config);
         
         if (config.DebugMode)
         {
-            Console.WriteLine($"?? [DEBUG] Ê±¼ä·ÖÅä½á¹û:");
+            Console.WriteLine($"ğŸ” [DEBUG] æ—¶é—´åˆ†é…ç»“æœ:");
             for (int i = 0; i < timeAllocatedSegments.Count; i++)
             {
                 var seg = timeAllocatedSegments[i];
@@ -86,12 +86,12 @@ public class SentenceEndingSplitStrategy : ISplitConditionStrategy
         {
             currentSentence.Append(text[i]);
             
-            // ¼ì²éÊÇ·ñÊÇ¾ä×Ó½áÊø·û
+            // æ£€æŸ¥æ˜¯å¦æ˜¯å¥å­ç»“æŸç¬¦
             if (IsSentenceEndingChar(text[i]))
             {
                 var sentenceText = currentSentence.ToString().Trim();
                 
-                // Ó¦ÓÃ×îĞ¡×Ö·ûÊı¹ıÂË
+                // åº”ç”¨æœ€å°å­—ç¬¦æ•°è¿‡æ»¤
                 if (sentenceText.Length >= config.MinSentenceCharacters)
                 {
                     sentences.Add(new SentenceInfo
@@ -105,11 +105,11 @@ public class SentenceEndingSplitStrategy : ISplitConditionStrategy
                     startPos = i + 1;
                     currentSentence.Clear();
                 }
-                // Ì«¶ÌµÄ¾ä×Ó¼ÌĞøÀÛ»ı
+                // å¤ªçŸ­çš„å¥å­ç»§ç»­ç´¯ç§¯
             }
         }
         
-        // ´¦ÀíÊ£Óà²¿·Ö
+        // å¤„ç†å‰©ä½™éƒ¨åˆ†
         ProcessRemainingSentence(sentences, currentSentence, startPos, text, config);
         
         return sentences;
@@ -132,7 +132,7 @@ public class SentenceEndingSplitStrategy : ISplitConditionStrategy
             }
             else if (sentences.Count > 0)
             {
-                // Ì«¶ÌµÄÎ²²¿ÎÄ±¾ºÏ²¢µ½×îºóÒ»¸ö¾ä×Ó
+                // å¤ªçŸ­çš„å°¾éƒ¨æ–‡æœ¬åˆå¹¶åˆ°æœ€åä¸€ä¸ªå¥å­
                 var lastSentence = sentences[^1];
                 lastSentence.Text += " " + remainingText;
                 lastSentence.EndPosition = text.Length - 1;
@@ -154,11 +154,11 @@ public class SentenceEndingSplitStrategy : ISplitConditionStrategy
         double totalDuration = original.Duration;
         double currentTime = original.StartTime;
         
-        // ·ÖÎöÃ¿¸ö¾ä×ÓµÄÌØÕ÷£¬¼ÆËãËùĞèµÄ¶îÍâÊ±¼ä
+        // åˆ†ææ¯ä¸ªå¥å­çš„ç‰¹å¾ï¼Œè®¡ç®—æ‰€éœ€çš„é¢å¤–æ—¶é—´
         var sentenceAnalysis = AnalyzeSentenceCharacteristics(sentences, config);
         var totalExtraTime = sentenceAnalysis.Sum(a => a.ExtraTimeNeeded);
         
-        // Ô¤Áô±ß½çµ÷ÕûÊ±¼äºÍÌØÊâÇé¿ö´¦ÀíÊ±¼ä
+        // é¢„ç•™è¾¹ç•Œè°ƒæ•´æ—¶é—´å’Œç‰¹æ®Šæƒ…å†µå¤„ç†æ—¶é—´
         double reservedPadding = config.SentenceBoundaryPadding * sentences.Count + totalExtraTime;
         double availableDuration = Math.Max(totalDuration - reservedPadding, totalDuration * 0.7);
         
@@ -168,7 +168,7 @@ public class SentenceEndingSplitStrategy : ISplitConditionStrategy
             var analysis = sentenceAnalysis[i];
             double duration;
             
-            // ¸ù¾İÅäÖÃÑ¡Ôñ»ù´¡Ê±¼ä·ÖÅä·½Ê½
+            // æ ¹æ®é…ç½®é€‰æ‹©åŸºç¡€æ—¶é—´åˆ†é…æ–¹å¼
             if (config.TimeAllocationMode == "equal")
             {
                 duration = availableDuration / sentences.Count;
@@ -180,13 +180,13 @@ public class SentenceEndingSplitStrategy : ISplitConditionStrategy
                 duration = availableDuration * proportion;
             }
             
-            // Ó¦ÓÃ¶¯Ì¬Ê±¼äµ÷Õû
+            // åº”ç”¨åŠ¨æ€æ—¶é—´è°ƒæ•´
             duration *= config.DynamicTimeAdjustmentFactor;
             
-            // Ó¦ÓÃÖÇÄÜ±ß½çÌî³ä
+            // åº”ç”¨æ™ºèƒ½è¾¹ç•Œå¡«å……
             ApplySmartBoundaryAdjustment(config, analysis, sentence, ref currentTime, ref duration, i);
             
-            // È·±£×îºóÒ»¸ö¾ä×ÓµÄ½áÊøÊ±¼äÕıÈ·
+            // ç¡®ä¿æœ€åä¸€ä¸ªå¥å­çš„ç»“æŸæ—¶é—´æ­£ç¡®
             double endTime = currentTime + duration;
             if (i == sentences.Count - 1)
             {
@@ -214,16 +214,16 @@ public class SentenceEndingSplitStrategy : ISplitConditionStrategy
     {
         if (config.EnableSmartBoundaryAdjustment)
         {
-            // ¾ä×Ó¿ªÊ¼Ç°µÄÌî³ä
+            // å¥å­å¼€å§‹å‰çš„å¡«å……
             if (index > 0)
             {
                 currentTime += config.SentenceBoundaryPadding / 2;
             }
             
-            // Ó¦ÓÃ¾ä×ÓÌØÕ÷µÄ¶îÍâÊ±¼ä
+            // åº”ç”¨å¥å­ç‰¹å¾çš„é¢å¤–æ—¶é—´
             duration += analysis.ExtraTimeNeeded;
             
-            // ±êµã·ûºÅºóµÄÌî³ä
+            // æ ‡ç‚¹ç¬¦å·åçš„å¡«å……
             if (IsNaturalBreakPoint(sentence.Text))
             {
                 duration += config.SilencePaddingAfterPunctuation;
@@ -233,7 +233,7 @@ public class SentenceEndingSplitStrategy : ISplitConditionStrategy
 
     private List<SentenceAnalysis> AnalyzeSentenceCharacteristics(List<SentenceInfo> sentences, SplitterConfig config)
     {
-        // ÕâÀï¸´ÓÃÔ­À´µÄ·ÖÎöÂß¼­
+        // è¿™é‡Œå¤ç”¨åŸæ¥çš„åˆ†æé€»è¾‘
         var analyses = new List<SentenceAnalysis>();
         
         foreach (var sentence in sentences)
@@ -248,16 +248,16 @@ public class SentenceEndingSplitStrategy : ISplitConditionStrategy
             var text = sentence.Text.Trim();
             var lowerText = text.ToLowerInvariant();
             
-            // ¼ò»¯µÄ·ÖÎöÂß¼­
-            if (text.EndsWith("!") || text.EndsWith("?") || text.EndsWith("£¡") || text.EndsWith("£¿"))
+            // ç®€åŒ–çš„åˆ†æé€»è¾‘
+            if (text.EndsWith("!") || text.EndsWith("?") || text.EndsWith("ï¼") || text.EndsWith("ï¼Ÿ"))
             {
-                analysis.Characteristics.Add("Óïµ÷±ä»¯");
+                analysis.Characteristics.Add("è¯­è°ƒå˜åŒ–");
                 analysis.ExtraTimeNeeded += config.IntonationBuffer;
             }
             
             if (text.Length < config.MinSentenceCharacters * 2)
             {
-                analysis.Characteristics.Add("¶Ì¾ä");
+                analysis.Characteristics.Add("çŸ­å¥");
                 if (config.ShortSentenceMode == "extend")
                 {
                     analysis.ExtraTimeNeeded += config.SentenceBoundaryPadding;
@@ -266,7 +266,7 @@ public class SentenceEndingSplitStrategy : ISplitConditionStrategy
             
             if (analysis.Characteristics.Count == 0)
             {
-                analysis.Characteristics.Add("ÆÕÍ¨¾ä×Ó");
+                analysis.Characteristics.Add("æ™®é€šå¥å­");
             }
             
             analyses.Add(analysis);
@@ -278,12 +278,12 @@ public class SentenceEndingSplitStrategy : ISplitConditionStrategy
     private bool IsSentenceEndingChar(char c)
     {
         return c == '.' || c == '!' || c == '?' || c == ';' || 
-               c == '¡£' || c == '£¡' || c == '£¿' || c == '£»';
+               c == 'ã€‚' || c == 'ï¼' || c == 'ï¼Ÿ' || c == 'ï¼›';
     }
 
     private bool IsNaturalBreakPoint(string text)
     {
-        var breakPoints = new[] { ".", "!", "?", ";", "¡£", "£¡", "£¿", "£»" };
+        var breakPoints = new[] { ".", "!", "?", ";", "ã€‚", "ï¼", "ï¼Ÿ", "ï¼›" };
         var trimmedText = text.Trim();
         return breakPoints.Any(bp => trimmedText.EndsWith(bp));
     }

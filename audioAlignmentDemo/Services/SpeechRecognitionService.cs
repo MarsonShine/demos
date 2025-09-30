@@ -1,68 +1,86 @@
-using Whisper.net;
+ï»¿using Whisper.net;
 using NAudio.Wave;
 using AudioAlignmentDemo.Models;
 
 namespace AudioAlignmentDemo.Services;
 
 /// <summary>
-/// ÓïÒôÊ¶±ğºÍ¶ÔÆë·şÎñ
-/// Ê¹ÓÃWhisperÄ£ĞÍ½øĞĞÓïÒôÊ¶±ğ²¢Ğ£ÕıÊ±¼ä¶ÔÆë
+/// è¯­éŸ³è¯†åˆ«å’Œå¯¹é½æœåŠ¡
+/// ä½¿ç”¨Whisperæ¨¡å‹è¿›è¡Œè¯­éŸ³è¯†åˆ«å¹¶æ ¡æ­£æ—¶é—´å¯¹é½
 /// </summary>
 public class SpeechRecognitionService
 {
     /// <summary>
-    /// Ö´ĞĞÓïÒôÊ¶±ğºÍÊ±¼ä¶ÔÆë
+    /// æ‰§è¡Œè¯­éŸ³è¯†åˆ«å’Œæ—¶é—´å¯¹é½
     /// </summary>
     public async Task<List<AudioSegment>> PerformAlignmentAsync(string audioPath, SplitterConfig config)
     {
-        Console.WriteLine("Ö´ĞĞÓïÒôÊ¶±ğºÍ¶ÔÆë...");
+        Console.WriteLine("ğŸ¯ æ‰§è¡Œé«˜ç²¾åº¦è¯­éŸ³è¯†åˆ«å’Œå¯¹é½...");
 
         var segments = new List<AudioSegment>();
 
         try
         {
-            // ÑéÖ¤ÒôÆµÎÄ¼ş¸ñÊ½
+            // éªŒè¯éŸ³é¢‘æ–‡ä»¶æ ¼å¼
             ValidateAudioFile(audioPath);
 
-            // »ñÈ¡»òÏÂÔØÄ£ĞÍ
+            // è·å–æˆ–ä¸‹è½½æ¨¡å‹
             var modelPath = await GetOrDownloadModelAsync(config.ModelSize);
 
             using var whisperFactory = WhisperFactory.FromPath(modelPath);
+            
+            // ğŸ”§ ä¼˜åŒ–Whisperé…ç½®ä»¥è·å¾—æ›´å¥½çš„åˆ†å‰²æ•ˆæœ
             using var processor = whisperFactory.CreateBuilder()
                 .WithLanguage(config.Language)
                 .WithThreads(Environment.ProcessorCount)
+                //.WithSegmentEventHandler()
+                .WithTokenTimestamps()
+                .WithProbabilities()
+                //.SplitOnWord()                    // é™ä½éšæœºæ€§ï¼Œæé«˜ä¸€è‡´æ€§
                 .Build();
 
             await using var fileStream = File.OpenRead(audioPath);
 
-            Console.WriteLine("¿ªÊ¼ÓïÒôÊ¶±ğ...");
+            Console.WriteLine("ğŸ¤ å¼€å§‹è¯­éŸ³è¯†åˆ«...");
             
-            // ?? »ñÈ¡ÒôÆµÎÄ¼şÊµ¼ÊÊ±³¤ÓÃÓÚĞ£Õı
+            // è·å–éŸ³é¢‘æ–‡ä»¶å®é™…æ—¶é•¿ç”¨äºæ ¡æ­£
             double actualAudioDuration = GetActualAudioDuration(audioPath);
 
+            // å¤„ç†è¯†åˆ«ç»“æœ
             await foreach (var result in processor.ProcessAsync(fileStream))
             {
-                // result is SegmentData, process it directly
                 if (!string.IsNullOrWhiteSpace(result.Text))
                 {
                     var audioSegment = new AudioSegment
                     {
-                        StartTime = result.Start.TotalSeconds,  // ? Ê¹ÓÃ TotalSeconds ¶ø²»ÊÇ TotalMilliseconds
-                        EndTime = result.End.TotalSeconds,     // ? Ê¹ÓÃ TotalSeconds ¶ø²»ÊÇ TotalMilliseconds
+                        StartTime = result.Start.TotalSeconds,
+                        EndTime = result.End.TotalSeconds,
                         Text = result.Text.Trim(),
-                        Duration = (result.End - result.Start).TotalSeconds // ? Ê¹ÓÃ TotalSeconds
+                        Duration = (result.End - result.Start).TotalSeconds
                     };
 
                     segments.Add(audioSegment);
-                    Console.WriteLine($"Ê¶±ğ: [{audioSegment.StartTime:F2}s-{audioSegment.EndTime:F2}s] {audioSegment.Text}");
+                    Console.WriteLine($"ğŸ¤ è¯†åˆ«æ®µè½: [{audioSegment.StartTime:F3}s-{audioSegment.EndTime:F3}s] ({audioSegment.Duration:F3}s) \"{audioSegment.Text}\"");
                 }
             }
 
-            // ?? ÖÇÄÜÊ±¼äĞ£Õı£º´¦Àí Whisper Ê¶±ğÊ±³¤ÓëÊµ¼ÊÒôÆµÊ±³¤²»Æ¥ÅäµÄÎÊÌâ
+            Console.WriteLine($"ğŸ“Š Whisperåˆå§‹è¯†åˆ«ç»“æœ: {segments.Count} ä¸ªæ®µè½");
+
+            // ğŸ†• å¤šçº§åˆ†å‰²ç­–ç•¥ï¼šå¦‚æœè¯†åˆ«ç»“æœä¸ç†æƒ³ï¼Œå°è¯•ä¸åŒçš„åˆ†å‰²æ–¹æ³•
+            if (ShouldTryAdvancedSplitting(segments, config))
+            {
+                Console.WriteLine("ğŸ” åº”ç”¨å¤šçº§åˆ†å‰²ç­–ç•¥ä»¥è·å¾—æ›´å¥½çš„åˆ†å‰²æ•ˆæœ...");
+                segments = await ApplyAdvancedSplittingStrategies(audioPath, segments, config);
+            }
+
+            // æ™ºèƒ½æ—¶é—´æ ¡æ­£ï¼šå¤„ç† Whisper è¯†åˆ«æ—¶é•¿ä¸å®é™…éŸ³é¢‘æ—¶é•¿ä¸åŒ¹é…çš„é—®é¢˜
             if (segments.Count > 0 && actualAudioDuration > 0 && config.EnableTimeCorrection)
             {
                 PerformTimeCorrection(segments, actualAudioDuration, config);
             }
+
+            // æœ€ç»ˆä¼˜åŒ–æ®µè½è¾¹ç•Œ
+            segments = OptimizeSegmentBoundaries(segments, config);
         }
         catch (Whisper.net.Wave.CorruptedWaveException ex)
         {
@@ -70,25 +88,479 @@ public class SpeechRecognitionService
         }
         catch (Exception ex)
         {
-            throw new InvalidOperationException($"ÓïÒôÊ¶±ğÊ§°Ü: {ex.Message}", ex);
+            throw new InvalidOperationException($"è¯­éŸ³è¯†åˆ«å¤±è´¥: {ex.Message}", ex);
         }
 
-        Console.WriteLine($"Ê¶±ğÍê³É£¬¹² {segments.Count} ¸öÆ¬¶Î");
+        Console.WriteLine($"âœ… è¯†åˆ«å®Œæˆï¼Œå…± {segments.Count} ä¸ªç‰‡æ®µ");
+        DisplaySegmentSummary(segments);
+        
         return segments;
     }
 
+    /// <summary>
+    /// åˆ¤æ–­æ˜¯å¦éœ€è¦å°è¯•é«˜çº§åˆ†å‰²ç­–ç•¥
+    /// </summary>
+    private bool ShouldTryAdvancedSplitting(List<AudioSegment> segments, SplitterConfig config)
+    {
+        // å¦‚æœåªæœ‰ä¸€ä¸ªé•¿æ®µè½ï¼Œè‚¯å®šéœ€è¦è¿›ä¸€æ­¥åˆ†å‰²
+        if (segments.Count == 1 && segments[0].Duration > config.WhisperMinSegmentLength * 2)
+        {
+            return true;
+        }
+
+        // å¦‚æœæ®µè½æ•°é‡å¤ªå°‘ä¸”å¹³å‡æ—¶é•¿è¿‡é•¿ï¼Œä¹Ÿéœ€è¦åˆ†å‰²
+        if (segments.Count > 0 && segments.Count < 3 && segments.Average(s => s.Duration) > config.MaxSegmentDuration)
+        {
+            return true;
+        }
+
+        // å¦‚æœæ‰€æœ‰æ®µè½éƒ½å¾ˆé•¿ï¼Œä¹Ÿéœ€è¦åˆ†å‰²
+        if (segments.Count > 0 && segments.All(s => s.Duration > config.MaxSegmentDuration))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// åº”ç”¨å¤šçº§åˆ†å‰²ç­–ç•¥
+    /// </summary>
+    private async Task<List<AudioSegment>> ApplyAdvancedSplittingStrategies(string audioPath, List<AudioSegment> initialSegments, SplitterConfig config)
+    {
+        var bestSegments = initialSegments;
+        
+        // ç­–ç•¥1: å°è¯•ä¸åŒçš„Whisperé…ç½®
+        Console.WriteLine("ğŸ”¬ ç­–ç•¥1: å°è¯•ä¸åŒçš„Whisperé…ç½®...");
+        var whisperVariants = await TryDifferentWhisperConfigs(audioPath, config);
+        if (whisperVariants.Count > bestSegments.Count)
+        {
+            Console.WriteLine($"âœ… Whisperé…ç½®ä¼˜åŒ–æˆåŠŸ: {bestSegments.Count} â†’ {whisperVariants.Count} ä¸ªæ®µè½");
+            bestSegments = whisperVariants;
+        }
+
+        // ç­–ç•¥2: å¯¹é•¿æ®µè½è¿›è¡Œé™éŸ³æ£€æµ‹åˆ†å‰²
+        Console.WriteLine("ğŸ” ç­–ç•¥2: é™éŸ³æ£€æµ‹åˆ†å‰²...");
+        var silenceBasedSegments = new List<AudioSegment>();
+        foreach (var segment in bestSegments)
+        {
+            if (segment.Duration > config.MaxSegmentDuration)
+            {
+                var splitSegments = DetectSilenceBasedSegments(audioPath, segment, config);
+                silenceBasedSegments.AddRange(splitSegments);
+            }
+            else
+            {
+                silenceBasedSegments.Add(segment);
+            }
+        }
+        
+        if (silenceBasedSegments.Count > bestSegments.Count)
+        {
+            Console.WriteLine($"âœ… é™éŸ³æ£€æµ‹åˆ†å‰²æˆåŠŸ: {bestSegments.Count} â†’ {silenceBasedSegments.Count} ä¸ªæ®µè½");
+            bestSegments = silenceBasedSegments;
+        }
+
+        // ç­–ç•¥3: æ™ºèƒ½å›ºå®šæ—¶é•¿åˆ†å‰²ï¼ˆæœ€åçš„å¤‡é€‰æ–¹æ¡ˆï¼‰
+        if (bestSegments.Any(s => s.Duration > config.MaxSegmentDuration))
+        {
+            Console.WriteLine("â± ç­–ç•¥3: æ™ºèƒ½å›ºå®šæ—¶é•¿åˆ†å‰²...");
+            var finalSegments = new List<AudioSegment>();
+            foreach (var segment in bestSegments)
+            {
+                if (segment.Duration > config.MaxSegmentDuration)
+                {
+                    var splitSegments = PerformIntelligentFixedSplit(segment, config);
+                    finalSegments.AddRange(splitSegments);
+                }
+                else
+                {
+                    finalSegments.Add(segment);
+                }
+            }
+            bestSegments = finalSegments;
+        }
+
+        return bestSegments;
+    }
+
+    /// <summary>
+    /// å°è¯•ä¸åŒçš„Whisperé…ç½®
+    /// </summary>
+    private async Task<List<AudioSegment>> TryDifferentWhisperConfigs(string audioPath, SplitterConfig config)
+    {
+        var bestSegments = new List<AudioSegment>();
+        var temperatures = new float[] { 0.1f, 0.3f, 0.5f };
+
+        foreach (var temp in temperatures)
+        {
+            try
+            {
+                Console.WriteLine($"ğŸŒ¡ï¸ å°è¯•æ¸©åº¦å‚æ•°: {temp}");
+                
+                var modelPath = await GetOrDownloadModelAsync(config.ModelSize);
+                using var whisperFactory = WhisperFactory.FromPath(modelPath);
+                
+                using var processor = whisperFactory.CreateBuilder()
+                    .WithLanguage(config.Language)
+                    .WithThreads(Environment.ProcessorCount)
+                    .WithTemperature(temp)
+                    .Build();
+
+                await using var fileStream = File.OpenRead(audioPath);
+                var segments = new List<AudioSegment>();
+                
+                await foreach (var result in processor.ProcessAsync(fileStream))
+                {
+                    if (!string.IsNullOrWhiteSpace(result.Text))
+                    {
+                        segments.Add(new AudioSegment
+                        {
+                            StartTime = result.Start.TotalSeconds,
+                            EndTime = result.End.TotalSeconds,
+                            Text = result.Text.Trim(),
+                            Duration = (result.End - result.Start).TotalSeconds
+                        });
+                    }
+                }
+                
+                if (segments.Count > bestSegments.Count)
+                {
+                    bestSegments = segments;
+                    Console.WriteLine($"   âœ… æ¸©åº¦ {temp} äº§ç”Ÿæ›´å¥½ç»“æœ: {segments.Count} ä¸ªæ®µè½");
+                }
+                else
+                {
+                    Console.WriteLine($"   ğŸ“Š æ¸©åº¦ {temp} ç»“æœ: {segments.Count} ä¸ªæ®µè½");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"   âš  æ¸©åº¦ {temp} é…ç½®å¤±è´¥: {ex.Message}");
+            }
+        }
+
+        return bestSegments;
+    }
+
+    // ä¿æŒåŸæœ‰çš„é™éŸ³æ£€æµ‹æ–¹æ³•ï¼Œä½†ç®€åŒ–å®ç°...
+    private List<AudioSegment> DetectSilenceBasedSegments(string audioPath, AudioSegment originalSegment, SplitterConfig config)
+    {
+        try
+        {
+            Console.WriteLine($"ğŸ”Š å¯¹æ®µè½è¿›è¡Œé™éŸ³æ£€æµ‹åˆ†å‰²: [{originalSegment.StartTime:F2}s-{originalSegment.EndTime:F2}s]");
+            
+            using var reader = new AudioFileReader(audioPath);
+            var startSample = (long)(originalSegment.StartTime * reader.WaveFormat.SampleRate);
+            var endSample = (long)(originalSegment.EndTime * reader.WaveFormat.SampleRate);
+            var sampleCount = endSample - startSample;
+            
+            if (sampleCount <= 0) return new List<AudioSegment> { originalSegment };
+            
+            // è¯»å–æŒ‡å®šèŒƒå›´çš„éŸ³é¢‘æ•°æ®
+            reader.Position = startSample * reader.WaveFormat.BlockAlign;
+            var samples = new float[sampleCount];
+            var actualRead = reader.Read(samples, 0, (int)Math.Min(sampleCount, samples.Length));
+            
+            if (actualRead < samples.Length) 
+            {
+                Array.Resize(ref samples, actualRead);
+            }
+
+            // ç®€åŒ–çš„é™éŸ³æ£€æµ‹
+            var silenceThreshold = CalculateOptimalThreshold(samples);
+            var minSilenceDuration = 0.3; // 300ms
+            var sampleRate = reader.WaveFormat.SampleRate;
+            var minSilenceSamples = (int)(minSilenceDuration * sampleRate);
+            
+            var silencePositions = FindSilencePositions(samples, silenceThreshold, minSilenceSamples, sampleRate);
+            
+            if (silencePositions.Count > 0)
+            {
+                return CreateSegmentsFromPositions(silencePositions, originalSegment, sampleRate);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"âš  é™éŸ³æ£€æµ‹å¤±è´¥: {ex.Message}");
+        }
+        
+        return new List<AudioSegment> { originalSegment };
+    }
+
+    private float CalculateOptimalThreshold(float[] samples)
+    {
+        if (samples.Length == 0) return 0.01f;
+        
+        var amplitudes = samples.Select(Math.Abs).OrderBy(x => x).ToArray();
+        var median = amplitudes[amplitudes.Length / 2];
+        var percentile20 = amplitudes[(int)(amplitudes.Length * 0.2)];
+        
+        return Math.Max(percentile20, median * 0.15f);
+    }
+
+    private List<int> FindSilencePositions(float[] samples, float threshold, int minSilenceSamples, int sampleRate)
+    {
+        var positions = new List<int>();
+        var windowSize = sampleRate / 20; // 50msçª—å£
+        int silenceStart = -1;
+        
+        for (int i = 0; i < samples.Length - windowSize; i += windowSize / 4)
+        {
+            // è®¡ç®—çª—å£å†…çš„å¹³å‡éŸ³é‡
+            var windowVolume = 0f;
+            for (int j = 0; j < windowSize && i + j < samples.Length; j++)
+            {
+                windowVolume += Math.Abs(samples[i + j]);
+            }
+            windowVolume /= windowSize;
+            
+            if (windowVolume < threshold)
+            {
+                if (silenceStart == -1) silenceStart = i;
+            }
+            else
+            {
+                if (silenceStart != -1 && (i - silenceStart) > minSilenceSamples)
+                {
+                    positions.Add(silenceStart + (i - silenceStart) / 2); // é™éŸ³ä¸­ç‚¹
+                }
+                silenceStart = -1;
+            }
+        }
+        
+        return positions;
+    }
+
+    private List<AudioSegment> CreateSegmentsFromPositions(List<int> positions, AudioSegment original, int sampleRate)
+    {
+        var segments = new List<AudioSegment>();
+        var words = original.Text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        
+        double currentStart = original.StartTime;
+        int wordIndex = 0;
+        
+        foreach (var pos in positions)
+        {
+            double splitTime = original.StartTime + (double)pos / sampleRate;
+            
+            if (splitTime - currentStart >= 1.0) // è‡³å°‘1ç§’
+            {
+                int wordsForSegment = Math.Max(1, (int)Math.Round((double)words.Length * (splitTime - currentStart) / original.Duration));
+                wordsForSegment = Math.Min(wordsForSegment, words.Length - wordIndex);
+                
+                if (wordsForSegment > 0)
+                {
+                    var segmentWords = words.Skip(wordIndex).Take(wordsForSegment);
+                    segments.Add(new AudioSegment
+                    {
+                        StartTime = currentStart,
+                        EndTime = splitTime,
+                        Duration = splitTime - currentStart,
+                        Text = string.Join(" ", segmentWords)
+                    });
+                    
+                    currentStart = splitTime;
+                    wordIndex += wordsForSegment;
+                }
+            }
+        }
+        
+        // æ·»åŠ æœ€åä¸€æ®µ
+        if (wordIndex < words.Length)
+        {
+            var remainingWords = words.Skip(wordIndex);
+            segments.Add(new AudioSegment
+            {
+                StartTime = currentStart,
+                EndTime = original.EndTime,
+                Duration = original.EndTime - currentStart,
+                Text = string.Join(" ", remainingWords)
+            });
+        }
+        
+        Console.WriteLine($"   âœ‚ï¸ é™éŸ³æ£€æµ‹åˆ†å‰²: {segments.Count} ä¸ªæ–°æ®µè½");
+        return segments.Count > 1 ? segments : new List<AudioSegment> { original };
+    }
+
+    /// <summary>
+    /// æ™ºèƒ½å›ºå®šæ—¶é•¿åˆ†å‰²
+    /// </summary>
+    private List<AudioSegment> PerformIntelligentFixedSplit(AudioSegment segment, SplitterConfig config)
+    {
+        var targetDuration = config.MaxSegmentDuration * 0.8; // ç¨å¾®å°äºæœ€å¤§æ—¶é•¿
+        var segmentCount = Math.Max(2, (int)Math.Ceiling(segment.Duration / targetDuration));
+        
+        var segments = new List<AudioSegment>();
+        var words = segment.Text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var segmentDuration = segment.Duration / segmentCount;
+        
+        Console.WriteLine($"â± æ™ºèƒ½å›ºå®šåˆ†å‰²: {segment.Duration:F1}s â†’ {segmentCount}æ®µ (æ¯æ®µçº¦{segmentDuration:F1}s)");
+        
+        for (int i = 0; i < segmentCount; i++)
+        {
+            var startTime = segment.StartTime + i * segmentDuration;
+            var endTime = (i == segmentCount - 1) ? segment.EndTime : startTime + segmentDuration;
+            
+            var wordStart = (int)Math.Round((double)words.Length * i / segmentCount);
+            var wordEnd = (i == segmentCount - 1) ? words.Length : (int)Math.Round((double)words.Length * (i + 1) / segmentCount);
+            var segmentWords = words.Skip(wordStart).Take(wordEnd - wordStart);
+            
+            if (segmentWords.Any())
+            {
+                segments.Add(new AudioSegment
+                {
+                    StartTime = startTime,
+                    EndTime = endTime,
+                    Duration = endTime - startTime,
+                    Text = string.Join(" ", segmentWords)
+                });
+            }
+        }
+        
+        return segments;
+    }
+
+    /// <summary>
+    /// ä¼˜åŒ–æ®µè½è¾¹ç•Œ - ä¿®å¤æ—¶é—´é—´éš™å’Œé‡å é—®é¢˜
+    /// </summary>
+    private List<AudioSegment> OptimizeSegmentBoundaries(List<AudioSegment> segments, SplitterConfig config)
+    {
+        if (segments.Count <= 1) return segments;
+        
+        Console.WriteLine("ğŸ”§ ä¼˜åŒ–æ®µè½è¾¹ç•Œ...");
+        int optimizations = 0;
+        
+        for (int i = 0; i < segments.Count - 1; i++)
+        {
+            var current = segments[i];
+            var next = segments[i + 1];
+            
+            // ä¿®å¤é‡å 
+            if (current.EndTime > next.StartTime)
+            {
+                double midPoint = (current.EndTime + next.StartTime) / 2;
+                current.EndTime = midPoint;
+                current.Duration = current.EndTime - current.StartTime;
+                next.StartTime = midPoint;
+                next.Duration = next.EndTime - next.StartTime;
+                optimizations++;
+                
+                if (config.DebugMode)
+                {
+                    Console.WriteLine($"   ğŸ”§ ä¿®å¤é‡å : æ®µè½{i+1}-{i+2} åœ¨{midPoint:F3}så¤„åˆ†å‰²");
+                }
+            }
+            // ğŸ†• ä¿®å¤é—´éš™ - é™ä½é˜ˆå€¼å¹¶ç¡®ä¿æ— ç¼è¿æ¥
+            else if (current.EndTime < next.StartTime)
+            {
+                double gap = next.StartTime - current.EndTime;
+                
+                // å¯¹äºä»»ä½•é—´éš™éƒ½è¿›è¡Œå¤„ç†ï¼Œç¡®ä¿å®Œç¾å¯¹æ¥
+                if (gap > 0.001) // åªè¦å¤§äº1æ¯«ç§’å°±å¤„ç†
+                {
+                    // ğŸ¯ å…³é”®ä¿®å¤ï¼šç¡®ä¿ä¸‹ä¸€æ®µçš„å¼€å§‹æ—¶é—´ = å½“å‰æ®µçš„ç»“æŸæ—¶é—´
+                    next.StartTime = current.EndTime;
+                    next.Duration = next.EndTime - next.StartTime;
+                    optimizations++;
+                    
+                    if (config.DebugMode)
+                    {
+                        Console.WriteLine($"   ğŸ”§ æ¶ˆé™¤é—´éš™: æ®µè½{i+2} å¼€å§‹æ—¶é—´è°ƒæ•´ {gap:F3}s (ä»{next.StartTime + gap:F3}sè°ƒæ•´åˆ°{next.StartTime:F3}s)");
+                    }
+                }
+            }
+        }
+        
+        // ğŸ†• æœ€ç»ˆéªŒè¯ï¼šç¡®ä¿æ‰€æœ‰è¾¹ç•Œéƒ½å®Œç¾å¯¹æ¥
+        if (config.DebugMode && optimizations > 0)
+        {
+            Console.WriteLine("\nğŸ” è¾¹ç•Œä¼˜åŒ–åéªŒè¯:");
+            for (int i = 0; i < segments.Count - 1; i++)
+            {
+                var current = segments[i];
+                var next = segments[i + 1];
+                var gap = next.StartTime - current.EndTime;
+                
+                if (Math.Abs(gap) > 0.001)
+                {
+                    Console.WriteLine($"   âš ï¸  æ®µè½{i+1}-{i+2} ä»æœ‰é—´éš™: {gap:F3}s");
+                }
+                else
+                {
+                    Console.WriteLine($"   âœ… æ®µè½{i+1}-{i+2} å®Œç¾å¯¹æ¥: [{current.StartTime:F3}s-{current.EndTime:F3}s] â†’ [{next.StartTime:F3}s-{next.EndTime:F3}s]");
+                }
+            }
+        }
+        
+        if (optimizations > 0)
+        {
+            Console.WriteLine($"   âœ… å®Œæˆ {optimizations} é¡¹è¾¹ç•Œä¼˜åŒ–");
+        }
+        else
+        {
+            Console.WriteLine($"   âœ… æ®µè½è¾¹ç•Œå·²ç»å®Œç¾å¯¹æ¥ï¼Œæ— éœ€ä¼˜åŒ–");
+        }
+        
+        return segments;
+    }
+
+    /// <summary>
+    /// æ˜¾ç¤ºæ®µè½æ‘˜è¦ä¿¡æ¯
+    /// </summary>
+    private void DisplaySegmentSummary(List<AudioSegment> segments)
+    {
+        if (segments.Count == 0) return;
+        
+        Console.WriteLine("\nğŸ“Š è¯†åˆ«ç»“æœæ‘˜è¦:");
+        Console.WriteLine($"   æ®µè½æ•°é‡: {segments.Count}");
+        Console.WriteLine($"   æ€»æ—¶é•¿: {segments.Max(s => s.EndTime):F2}s");
+        Console.WriteLine($"   å¹³å‡æ®µè½æ—¶é•¿: {segments.Average(s => s.Duration):F2}s");
+        Console.WriteLine($"   æœ€çŸ­æ®µè½: {segments.Min(s => s.Duration):F2}s");
+        Console.WriteLine($"   æœ€é•¿æ®µè½: {segments.Max(s => s.Duration):F2}s");
+        
+        if (segments.Count <= 8 && segments.Count > 0)
+        {
+            Console.WriteLine("   æ®µè½è¯¦æƒ…:");
+            for (int i = 0; i < segments.Count; i++)
+            {
+                var seg = segments[i];
+                var preview = seg.Text.Length > 50 ? seg.Text.Substring(0, 50) + "..." : seg.Text;
+                Console.WriteLine($"     {i+1}. [{seg.StartTime:F2}s-{seg.EndTime:F2}s] \"{preview}\"");
+            }
+        }
+        else if (segments.Count > 8)
+        {
+            Console.WriteLine($"   (æ˜¾ç¤ºå‰3ä¸ªå’Œå3ä¸ªæ®µè½)");
+            for (int i = 0; i < 3; i++)
+            {
+                var seg = segments[i];
+                var preview = seg.Text.Length > 40 ? seg.Text.Substring(0, 40) + "..." : seg.Text;
+                Console.WriteLine($"     {i+1}. [{seg.StartTime:F2}s-{seg.EndTime:F2}s] \"{preview}\"");
+            }
+            Console.WriteLine("     ...");
+            for (int i = segments.Count - 3; i < segments.Count; i++)
+            {
+                var seg = segments[i];
+                var preview = seg.Text.Length > 40 ? seg.Text.Substring(0, 40) + "..." : seg.Text;
+                Console.WriteLine($"     {i+1}. [{seg.StartTime:F2}s-{seg.EndTime:F2}s] \"{preview}\"");
+            }
+        }
+    }
+
+    // ä¿æŒåŸæœ‰çš„è¾…åŠ©æ–¹æ³•...
     private double GetActualAudioDuration(string audioPath)
     {
         try
         {
             using var audioReader = new AudioFileReader(audioPath);
             var duration = audioReader.TotalTime.TotalSeconds;
-            Console.WriteLine($"?? ÒôÆµÎÄ¼şÊµ¼ÊÊ±³¤: {duration:F3}Ãë");
+            Console.WriteLine($"ğŸµ éŸ³é¢‘æ–‡ä»¶å®é™…æ—¶é•¿: {duration:F3}ç§’");
             return duration;
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"?? ÎŞ·¨»ñÈ¡ÒôÆµÊµ¼ÊÊ±³¤: {ex.Message}");
+            Console.WriteLine($"âš  æ— æ³•è·å–éŸ³é¢‘å®é™…æ—¶é•¿: {ex.Message}");
             return 0;
         }
     }
@@ -98,15 +570,14 @@ public class SpeechRecognitionService
         var whisperTotalDuration = segments.Max(s => s.EndTime);
         var timeDifference = actualAudioDuration - whisperTotalDuration;
         
-        Console.WriteLine($"?? Ê±³¤¶Ô±È·ÖÎö:");
-        Console.WriteLine($"   WhisperÊ¶±ğÊ±³¤: {whisperTotalDuration:F3}Ãë");
-        Console.WriteLine($"   ÒôÆµÊµ¼ÊÊ±³¤: {actualAudioDuration:F3}Ãë");
-        Console.WriteLine($"   Ê±³¤²îÒì: {timeDifference:F3}Ãë");
+        Console.WriteLine($"â° æ—¶é•¿å¯¹æ¯”åˆ†æ:");
+        Console.WriteLine($"   Whisperè¯†åˆ«æ—¶é•¿: {whisperTotalDuration:F3}ç§’");
+        Console.WriteLine($"   éŸ³é¢‘å®é™…æ—¶é•¿: {actualAudioDuration:F3}ç§’");
+        Console.WriteLine($"   æ—¶é•¿å·®å¼‚: {timeDifference:F3}ç§’");
 
-        // Èç¹û²îÒì³¬¹ıÅäÖÃµÄãĞÖµ£¬½øĞĞÖÇÄÜĞ£Õı
         if (Math.Abs(timeDifference) > config.TimeCorrectionThreshold)
         {
-            Console.WriteLine($"?? ¼ì²âµ½Ã÷ÏÔÊ±³¤²îÒì (>{config.TimeCorrectionThreshold:F3}s)£¬¿ªÊ¼ÖÇÄÜĞ£Õı...");
+            Console.WriteLine($"ğŸ”§ æ£€æµ‹åˆ°æ˜æ˜¾æ—¶é•¿å·®å¼‚ (>{config.TimeCorrectionThreshold:F3}s)ï¼Œå¼€å§‹æ™ºèƒ½æ ¡æ­£...");
             
             if (timeDifference > 0)
             {
@@ -121,24 +592,21 @@ public class SpeechRecognitionService
         }
         else
         {
-            Console.WriteLine($"   ? Ê±³¤Æ¥ÅäÁ¼ºÃ£¬ÎŞĞèĞ£Õı (²îÒì ¡Ü {config.TimeCorrectionThreshold:F3}s)");
+            Console.WriteLine($"   âœ… æ—¶é•¿åŒ¹é…è‰¯å¥½ï¼Œæ— éœ€æ ¡æ­£ (å·®å¼‚ â‰¤ {config.TimeCorrectionThreshold:F3}s)");
         }
     }
 
     private void ApplyExtensionCorrection(List<AudioSegment> segments, double actualAudioDuration, double timeDifference, SplitterConfig config)
     {
-        // Êµ¼ÊÒôÆµ±ÈWhisperÊ¶±ğµÄ³¤£¬À©Õ¹×îºóÒ»¸ö¶ÎÂä
         var lastSegment = segments[^1];
         var originalEnd = lastSegment.EndTime;
         
-        // ?? ²ßÂÔ1: °´±ÈÀıÀ©Õ¹×îºóÒ»¸ö¶ÎÂä
         var extensionTime = Math.Min(timeDifference, config.MaxExtensionTime);
         lastSegment.EndTime = Math.Min(actualAudioDuration, originalEnd + extensionTime);
         lastSegment.Duration = lastSegment.EndTime - lastSegment.StartTime;
         
-        Console.WriteLine($"   ? À©Õ¹×îºó¶ÎÂä: {originalEnd:F3}s ¡ú {lastSegment.EndTime:F3}s (+{extensionTime:F3}s)");
+        Console.WriteLine($"   â¡ï¸ æ‰©å±•æœ€åæ®µè½: {originalEnd:F3}s â†’ {lastSegment.EndTime:F3}s (+{extensionTime:F3}s)");
         
-        // ?? ²ßÂÔ2: Èç¹û»¹ÓĞÊ£Óà²îÒì£¬°´±ÈÀıµ÷ÕûËùÓĞ¶ÎÂä
         var remainingDifference = actualAudioDuration - lastSegment.EndTime;
         if (remainingDifference > config.TimeCorrectionThreshold)
         {
@@ -148,9 +616,8 @@ public class SpeechRecognitionService
 
     private void ApplyCompressionCorrection(List<AudioSegment> segments, double actualAudioDuration, double whisperTotalDuration)
     {
-        // WhisperÊ¶±ğµÄ±ÈÊµ¼ÊÒôÆµ³¤£¨²»³£¼ûµ«¿ÉÄÜ·¢Éú£©
         var compressionFactor = actualAudioDuration / whisperTotalDuration;
-        Console.WriteLine($"   ?? Ó¦ÓÃÊ±¼äÑ¹ËõÒò×Ó: {compressionFactor:F4}");
+        Console.WriteLine($"   â¬‡ï¸ åº”ç”¨æ—¶é—´å‹ç¼©å› å­: {compressionFactor:F4}");
         
         foreach (var segment in segments)
         {
@@ -159,13 +626,13 @@ public class SpeechRecognitionService
             segment.Duration = segment.EndTime - segment.StartTime;
         }
         
-        Console.WriteLine($"   ? Ê±¼äÑ¹ËõĞ£ÕıÍê³É");
+        Console.WriteLine($"   âœ… æ—¶é—´å‹ç¼©æ ¡æ­£å®Œæˆ");
     }
 
     private void ApplyScaleCorrection(List<AudioSegment> segments, double actualAudioDuration, double currentTotalDuration, SplitterConfig config)
     {
         var scaleFactor = actualAudioDuration / currentTotalDuration;
-        Console.WriteLine($"   ?? Ó¦ÓÃÊ±¼äËõ·ÅÒò×Ó: {scaleFactor:F4}");
+        Console.WriteLine($"   ğŸ“ åº”ç”¨æ—¶é—´ç¼©æ”¾å› å­: {scaleFactor:F4}");
         
         foreach (var segment in segments)
         {
@@ -178,11 +645,11 @@ public class SpeechRecognitionService
             
             if (config.DebugMode)
             {
-                Console.WriteLine($"     ¶ÎÂäĞ£Õı: [{segmentOriginalStart:F3}-{segmentOriginalEnd:F3}] ¡ú [{segment.StartTime:F3}-{segment.EndTime:F3}]");
+                Console.WriteLine($"     æ®µè½æ ¡æ­£: [{segmentOriginalStart:F3}-{segmentOriginalEnd:F3}] â†’ [{segment.StartTime:F3}-{segment.EndTime:F3}]");
             }
         }
         
-        Console.WriteLine($"   ? Ê±¼äËõ·ÅĞ£ÕıÍê³É");
+        Console.WriteLine($"   âœ… æ—¶é—´ç¼©æ”¾æ ¡æ­£å®Œæˆ");
     }
 
     private void ValidateCorrectionResults(List<AudioSegment> segments, double actualAudioDuration, SplitterConfig config)
@@ -190,39 +657,39 @@ public class SpeechRecognitionService
         var correctedTotalDuration = segments.Max(s => s.EndTime);
         var finalDifference = Math.Abs(actualAudioDuration - correctedTotalDuration);
         
-        Console.WriteLine($"?? Ğ£Õı½á¹û:");
-        Console.WriteLine($"   Ğ£ÕıºóÊ±³¤: {correctedTotalDuration:F3}Ãë");
-        Console.WriteLine($"   Ê£Óà²îÒì: {finalDifference:F3}Ãë");
+        Console.WriteLine($"ğŸ¯ æ ¡æ­£ç»“æœ:");
+        Console.WriteLine($"   æ ¡æ­£åæ—¶é•¿: {correctedTotalDuration:F3}ç§’");
+        Console.WriteLine($"   å‰©ä½™å·®å¼‚: {finalDifference:F3}ç§’");
         
         if (finalDifference <= config.TimeCorrectionThreshold)
         {
-            Console.WriteLine($"   ? Ğ£Õı³É¹¦£¡Ê±³¤Æ¥ÅäÁ¼ºÃ");
+            Console.WriteLine($"   âœ… æ ¡æ­£æˆåŠŸï¼æ—¶é•¿åŒ¹é…è‰¯å¥½");
         }
         else
         {
-            Console.WriteLine($"   ?? ÈÔÓĞ²îÒì£¬µ«ÒÑÃ÷ÏÔ¸ÄÉÆ");
+            Console.WriteLine($"   âš ï¸ ä»æœ‰å·®å¼‚ï¼Œä½†å·²æ˜æ˜¾æ”¹å–„");
         }
     }
 
     private void ValidateAudioFile(string audioPath)
     {
         using var reader = new AudioFileReader(audioPath);
-        Console.WriteLine($"´¦ÀíÒôÆµÎÄ¼ş: {audioPath}");
-        Console.WriteLine($"¸ñÊ½: {reader.WaveFormat.SampleRate}Hz, {reader.WaveFormat.Channels}Í¨µÀ, {reader.WaveFormat.BitsPerSample}Î»");
-        Console.WriteLine($"Ê±³¤: {reader.TotalTime.TotalSeconds:F2}Ãë");
-        Console.WriteLine($"±àÂë: {reader.WaveFormat.Encoding}");
+        Console.WriteLine($"ğŸµ å¤„ç†éŸ³é¢‘æ–‡ä»¶: {audioPath}");
+        Console.WriteLine($"   æ ¼å¼: {reader.WaveFormat.SampleRate}Hz, {reader.WaveFormat.Channels}é€šé“, {reader.WaveFormat.BitsPerSample}ä½");
+        Console.WriteLine($"   æ—¶é•¿: {reader.TotalTime.TotalSeconds:F2}ç§’");
+        Console.WriteLine($"   ç¼–ç : {reader.WaveFormat.Encoding}");
         
-        // ¼ì²éÎÄ¼şÊÇ·ñÎª¿Õ
+        // æ£€æŸ¥æ–‡ä»¶æ˜¯å¦ä¸ºç©º
         if (reader.TotalTime.TotalSeconds < 0.1)
         {
-            throw new InvalidOperationException("ÒôÆµÎÄ¼şÊ±³¤¹ı¶Ì»òÎª¿Õ");
+            throw new InvalidOperationException("éŸ³é¢‘æ–‡ä»¶æ—¶é•¿è¿‡çŸ­æˆ–ä¸ºç©º");
         }
         
-        // ¼ì²éÊÇ·ñÎªÖ§³ÖµÄ¸ñÊ½
+        // æ£€æŸ¥æ˜¯å¦ä¸ºæ”¯æŒçš„æ ¼å¼
         if (reader.WaveFormat.Encoding != WaveFormatEncoding.Pcm && 
             reader.WaveFormat.Encoding != WaveFormatEncoding.IeeeFloat)
         {
-            Console.WriteLine($"¾¯¸æ: ÒôÆµ±àÂë¸ñÊ½ {reader.WaveFormat.Encoding} ¿ÉÄÜĞèÒª×ª»»");
+            Console.WriteLine($"âš ï¸ è­¦å‘Š: éŸ³é¢‘ç¼–ç æ ¼å¼ {reader.WaveFormat.Encoding} å¯èƒ½éœ€è¦è½¬æ¢");
         }
     }
 
@@ -233,19 +700,19 @@ public class SpeechRecognitionService
 
         if (File.Exists(modelPath))
         {
-            Console.WriteLine($"Ê¹ÓÃÏÖÓĞÄ£ĞÍ: {modelPath}");
+            Console.WriteLine($"ğŸ“ ä½¿ç”¨ç°æœ‰æ¨¡å‹: {modelPath}");
             return modelPath;
         }
 
-        // ´´½¨Ä£ĞÍÄ¿Â¼
+        // åˆ›å»ºæ¨¡å‹ç›®å½•
         Directory.CreateDirectory("models");
 
-        Console.WriteLine($"Ê×´ÎÔËĞĞ£¬ÕıÔÚÏÂÔØÄ£ĞÍ {modelSize}...");
-        Console.WriteLine("ÇëÉÔµÈ£¬Ä£ĞÍ½Ï´ó¿ÉÄÜĞèÒª¼¸·ÖÖÓÊ±¼ä...");
+        Console.WriteLine($"ğŸ”½ é¦–æ¬¡è¿è¡Œï¼Œæ­£åœ¨ä¸‹è½½æ¨¡å‹ {modelSize}...");
+        Console.WriteLine("â³ è¯·ç¨ç­‰ï¼Œæ¨¡å‹è¾ƒå¤§å¯èƒ½éœ€è¦å‡ åˆ†é’Ÿæ—¶é—´...");
 
-        // Ê¹ÓÃWhisper.netµÄÄÚÖÃÏÂÔØ¹¦ÄÜ
+        // ä½¿ç”¨Whisper.netçš„å†…ç½®ä¸‹è½½åŠŸèƒ½
         using var httpClient = new HttpClient();
-        httpClient.Timeout = TimeSpan.FromMinutes(10); // ÉèÖÃ³¬Ê±
+        httpClient.Timeout = TimeSpan.FromMinutes(10); // è®¾ç½®è¶…æ—¶
         var modelUrl = GetModelDownloadUrl(modelSize);
 
         var response = await httpClient.GetAsync(modelUrl);
@@ -254,7 +721,7 @@ public class SpeechRecognitionService
         await using var fileStream = File.Create(modelPath);
         await response.Content.CopyToAsync(fileStream);
 
-        Console.WriteLine($"Ä£ĞÍÏÂÔØÍê³É: {modelPath}");
+        Console.WriteLine($"âœ… æ¨¡å‹ä¸‹è½½å®Œæˆ: {modelPath}");
         return modelPath;
     }
 
@@ -266,25 +733,25 @@ public class SpeechRecognitionService
 
     private async Task<List<AudioSegment>> HandleCorruptedWaveFile(string audioPath, SplitterConfig config, Exception originalException)
     {
-        Console.WriteLine($"WAVÎÄ¼ş¸ñÊ½´íÎó: {originalException.Message}");
-        Console.WriteLine("³¢ÊÔÖØĞÂ´¦ÀíÒôÆµÎÄ¼ş...");
+        Console.WriteLine($"âŒ WAVæ–‡ä»¶æ ¼å¼é”™è¯¯: {originalException.Message}");
+        Console.WriteLine("ğŸ”„ å°è¯•é‡æ–°å¤„ç†éŸ³é¢‘æ–‡ä»¶...");
         
-        // ³¢ÊÔÖØĞÂ×ª»»ÒôÆµÎÄ¼ş
+        // å°è¯•é‡æ–°è½¬æ¢éŸ³é¢‘æ–‡ä»¶
         var backupPath = audioPath + ".fixed.wav";
         
-        // ÕâÀïĞèÒªÒıÓÃÒôÆµ×ª»»·şÎñ£¬µ«ÎªÁË±ÜÃâÑ­»·ÒÀÀµ£¬ÎÒÃÇÔİÊ±¼ò»¯´¦Àí
-        // ÔÚÊµ¼ÊÓ¦ÓÃÖĞ£¬Ó¦¸ÃÍ¨¹ıÒÀÀµ×¢ÈëÀ´´¦Àí
+        // è¿™é‡Œéœ€è¦å¼•ç”¨éŸ³é¢‘è½¬æ¢æœåŠ¡ï¼Œä½†ä¸ºäº†é¿å…å¾ªç¯ä¾èµ–ï¼Œæˆ‘ä»¬æš‚æ—¶ç®€åŒ–å¤„ç†
+        // åœ¨å®é™…åº”ç”¨ä¸­ï¼Œåº”è¯¥é€šè¿‡ä¾èµ–æ³¨å…¥æ¥å¤„ç†
         
-        // µİ¹éµ÷ÓÃ£¬µ«Òª·ÀÖ¹ÎŞÏŞµİ¹é
+        // é€’å½’è°ƒç”¨ï¼Œä½†è¦é˜²æ­¢æ— é™é€’å½’
         if (!audioPath.Contains(".fixed.wav"))
         {
-            // ÕâÀïÓ¦¸Ãµ÷ÓÃAudioConversionServiceÀ´ĞŞ¸´ÎÄ¼ş
+            // è¿™é‡Œåº”è¯¥è°ƒç”¨AudioConversionServiceæ¥ä¿®å¤æ–‡ä»¶
             // var conversionService = new AudioConversionService();
             // conversionService.ConvertWavToOptimalFormat(audioPath, backupPath);
             
             var backupSegments = await PerformAlignmentAsync(backupPath, config);
             
-            // ÇåÀí±¸·İÎÄ¼ş
+            // æ¸…ç†å¤‡ä»½æ–‡ä»¶
             if (File.Exists(backupPath))
                 File.Delete(backupPath);
             
@@ -292,7 +759,7 @@ public class SpeechRecognitionService
         }
         else
         {
-            throw new InvalidOperationException($"ÎŞ·¨´¦ÀíÒôÆµÎÄ¼ş¸ñÊ½£¬¼´Ê¹ÔÚÖØĞÂ×ª»»ºó: {originalException.Message}", originalException);
+            throw new InvalidOperationException($"æ— æ³•å¤„ç†éŸ³é¢‘æ–‡ä»¶æ ¼å¼ï¼Œå³ä½¿åœ¨é‡æ–°è½¬æ¢å: {originalException.Message}", originalException);
         }
     }
 }

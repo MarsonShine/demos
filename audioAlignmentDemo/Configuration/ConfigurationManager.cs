@@ -119,17 +119,17 @@ public class ConfigurationManager
         {
             ModelSize = "small",
             AudioQualityStrategy = "HighQuality",
-            SentenceBoundaryPadding = 0.3,
+            SentenceBoundaryPadding = 0.18,
             TimeAllocationMode = "proportional",
-            MinSentenceCharacters = 6,
-            SilencePaddingAfterPunctuation = 0.2,
+            MinSentenceCharacters = 2,
+            SilencePaddingAfterPunctuation = 0.05,
             EnableSmartBoundaryAdjustment = true,
             EnableTimeCorrection = true,
             TimeCorrectionThreshold = 0.1,
             MaxExtensionTime = 0.5,
             InterjectionPadding = 0.1,
-            IntonationBuffer = 0.15,
-            DynamicTimeAdjustmentFactor = 1.2,
+            IntonationBuffer = 0.25,
+            DynamicTimeAdjustmentFactor = 1.18,
             DebugMode = false
         };
 

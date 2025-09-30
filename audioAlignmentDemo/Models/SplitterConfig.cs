@@ -76,7 +76,7 @@ public class SplitterConfig
     /// 句子边界扩展时间（秒）- 向前扩展多少时间来避免切断单词
     /// 建议值: 0.1-0.5秒
     /// </summary>
-    public double SentenceBoundaryPadding { get; set; } = 0.2;
+    public double SentenceBoundaryPadding { get; set; } = 0.05;
 
     /// <summary>
     /// 时间分配方式: "proportional"(按字符比例) 或 "equal"(平均分配)
@@ -168,7 +168,7 @@ public class SplitterConfig
     /// 这些句子通常有语调变化，发音时间更长
     /// 建议值: 0.1-0.3秒
     /// </summary>
-    public double IntonationBuffer { get; set; } = 0.2;
+    public double IntonationBuffer { get; set; } = 0.05;
 
     /// <summary>
     /// 动态时间调整系数 - 根据句子特征动态调整时间分配
@@ -198,6 +198,27 @@ public class SplitterConfig
     /// 当识别结果段数少于此值时，跳过音频分割处理
     /// </summary>
     public int SkipSplitThreshold { get; set; } = 2;
+
+    // 🆕 预设文本内容支持
+    /// <summary>
+    /// 预设文本内容 - 当提供时，将跳过语音识别，直接使用此文本进行分割
+    /// 用于解决语音识别标点符号错误导致分割失效的问题
+    /// </summary>
+    public string? PresetTextContent { get; set; }
+    
+    /// <summary>
+    /// 是否使用预设文本内容
+    /// 自动根据 PresetTextContent 是否为空来判断
+    /// </summary>
+    public bool UsePresetTextContent => !string.IsNullOrWhiteSpace(PresetTextContent);
+    
+    /// <summary>
+    /// 预设文本使用模式
+    /// "replace": 完全替换识别结果 (默认)
+    /// "fallback": 仅在识别失败时使用
+    /// "merge": 合并识别结果和预设文本 (实验性)
+    /// </summary>
+    public string PresetTextMode { get; set; } = "replace";
 
     /// <summary>
     /// 获取支持的格式字符串用于显示

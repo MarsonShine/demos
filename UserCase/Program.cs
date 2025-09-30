@@ -1,8 +1,9 @@
 ﻿// See https://aka.ms/new-console-template for more information
+using AudioAlignmentDemo.Configuration;
 using AudioAlignmentDemo.Library;
 using Fz.Platform.Office;
-using UserCase;
 using System.Net.Http;
+using UserCase;
 
 Console.WriteLine("=== 音频分割处理程序 ===");
 Console.WriteLine("开始处理音频分割任务...\n");
@@ -61,7 +62,9 @@ try
     Console.WriteLine($"✓ 输出目录: {Path.GetFullPath(baseOutputDir)}");
 
     // 初始化音频分割器和HTTP客户端
-    AudioSplitterLibrary audioSplitter = new();
+    var config = ConfigurationManager.Presets.Balanced;
+    config.Language = "en";
+    AudioSplitterLibrary audioSplitter = new(config);
     HttpClient httpClient = new();
     httpClient.Timeout = TimeSpan.FromMinutes(10); // 设置下载超时
 
@@ -134,7 +137,7 @@ try
                 Directory.CreateDirectory(itemOutputDirectory);
 
                 Console.WriteLine($"    🔧 正在执行音频分割...");
-                var result = await audioSplitter.ProcessAudioFileWithTextAsync(tempAudioPath, item.Content!, itemOutputDirectory);
+                var result = await audioSplitter.ProcessAudioFileAsync(tempAudioPath, item.Content!, itemOutputDirectory);
 
                 if (result.Success)
                 {
