@@ -95,13 +95,13 @@ public class AudioSplitter
             Console.WriteLine("\n✂️ 步骤 5/6: 音频文件切割");
             await _splittingService.SplitAudioFilesAsync(config.InputAudioPath, optimizedSegments, config);
 
-            // 8. 生成处理报告
-            Console.WriteLine("\n📊 步骤 6/6: 生成处理报告");
-            _reportService.GenerateReport(optimizedSegments, config);
+            //// 8. 生成处理报告
+            //Console.WriteLine("\n📊 步骤 6/6: 生成处理报告");
+            //_reportService.GenerateReport(optimizedSegments, config);
             
-            // 9. 生成性能分析报告
-            var processingTime = DateTime.Now - startTime;
-            _reportService.GeneratePerformanceReport(optimizedSegments, processingTime, config.OutputDirectory);
+            //// 9. 生成性能分析报告
+            //var processingTime = DateTime.Now - startTime;
+            //_reportService.GeneratePerformanceReport(optimizedSegments, processingTime, config.OutputDirectory);
 
             // 10. 清理临时文件
             CleanupTemporaryFiles(processedAudio, config);
