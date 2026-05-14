@@ -6,6 +6,11 @@ from pathlib import Path
 
 from video_analysis_pipeline.config import load_config
 from video_analysis_pipeline.pipeline import process_batch, process_single_video
+from video_analysis_pipeline.review_api import (
+    DEFAULT_REVIEW_SERVER_HOST,
+    DEFAULT_REVIEW_SERVER_PORT,
+    serve_review_api,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -40,6 +45,14 @@ def build_parser() -> argparse.ArgumentParser:
     batch_parser.add_argument("--language", type=str, default=None, help="Override ASR language, for example en or en-US.")
     batch_parser.add_argument("--asr-provider", type=str, default=None, help="Override ASR provider, for example faster-whisper or azure-speech.")
 
+    review_server_parser = subparsers.add_parser(
+        "review-server",
+        help="Serve generated review pages and allow in-browser saves to rewrite output artifacts.",
+    )
+    review_server_parser.add_argument("--output-root", type=Path, default=Path("output"), help="Root output folder that contains review.html files.")
+    review_server_parser.add_argument("--host", type=str, default=DEFAULT_REVIEW_SERVER_HOST, help="Host interface for the local review server.")
+    review_server_parser.add_argument("--port", type=int, default=DEFAULT_REVIEW_SERVER_PORT, help="Port for the local review server.")
+
     return parser
 
 
@@ -57,6 +70,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
+        if args.command == "review-server":
+            try:
+                serve_review_api(output_root=args.output_root, host=args.host, port=args.port)
+                return 0
+            except KeyboardInterrupt:
+                print("Review server stopped.")
+                return 0
+
         config = load_config(args.config)
         if args.asr_provider:
             config.asr.provider = args.asr_provider

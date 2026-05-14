@@ -37,6 +37,20 @@ class ExporterTests(unittest.TestCase):
             self.assertIn("segments-data", html)
             self.assertIn("playSegment", html)
             self.assertIn("onlyAnomalies", html)
+            self.assertIn("backwardStepMs", html)
+            self.assertIn("forwardStepMs", html)
+            self.assertIn('value="15"', html)
+            self.assertIn("moveStartBackwardButton", html)
+            self.assertIn("moveStartForwardButton", html)
+            self.assertIn("moveEndBackwardButton", html)
+            self.assertIn("moveEndForwardButton", html)
+            self.assertIn("adjustSegmentBoundary('start_ms', -1)", html)
+            self.assertIn("adjustSegmentBoundary('end_ms', 1)", html)
+            self.assertIn("saveAdjustmentsButton", html)
+            self.assertNotIn("exportAdjustmentsButton", html)
+            self.assertIn("postAdjustmentsToApi", html)
+            self.assertIn("/api/review/save", html)
+            self.assertIn("review-server --output-root output", html)
 
     def test_review_page_only_anomalies_filter_ignores_benign_flags(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -74,6 +88,11 @@ class ExporterTests(unittest.TestCase):
             self.assertIn("const anomalyFlags = getAnomalyFlags(segment);", html)
             self.assertIn("anomalyFlags.length === 0", html)
             self.assertIn("Number(item.dataset.index) === index", html)
+            self.assertIn("function formatSignedMilliseconds(delta)", html)
+            self.assertIn("localStorage.setItem(storageKey, JSON.stringify(payload));", html)
+            self.assertIn("localStorage.removeItem(storageKey);", html)
+            self.assertIn("commitSavedAdjustments()", html)
+            self.assertIn("const defaultApiBase = 'http://127.0.0.1:8765';", html)
 
 
 if __name__ == "__main__":
