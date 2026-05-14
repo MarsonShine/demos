@@ -44,6 +44,13 @@ class ProcessedItem:
     segments: list[Segment]
 
 
+@dataclass(slots=True)
+class BatchInputItem:
+    source_mp4: Path
+    source_srt: Path
+    relative_dir: Path
+
+
 def process_single_video(
     source_mp4: Path,
     output_dir: Path,
@@ -355,39 +362,94 @@ def _scale_video_to_audio(milliseconds: int, audio_duration_ms: int, video_durat
     return int(round(milliseconds * ratio))
 
 
+def discover_batch_inputs(
+    input_root: Path,
+    source_name: str | None = None,
+    srt_name: str | None = None,
+) -> list[BatchInputItem]:
+    if not input_root.exists():
+        raise FileNotFoundError(f"Input root not found: {input_root}")
+
+    directories = [input_root, *sorted((path for path in input_root.rglob("*") if path.is_dir()), key=_batch_directory_sort_key)]
+    discovered_items: list[BatchInputItem] = []
+
+    for directory in directories:
+        mp4_candidates = _sorted_media_files(directory, "*.mp4")
+        srt_candidates = _sorted_media_files(directory, "*.srt")
+
+        if not mp4_candidates and not srt_candidates:
+            continue
+
+        if len(mp4_candidates) != 1 or len(srt_candidates) != 1:
+            raise RuntimeError(
+                f"Expected exactly one MP4 and one SRT in {directory}, "
+                f"found {len(mp4_candidates)} MP4 and {len(srt_candidates)} SRT."
+            )
+
+        source_mp4 = mp4_candidates[0]
+        source_srt = srt_candidates[0]
+        if source_name is not None and source_mp4.name != source_name:
+            continue
+        if srt_name is not None and source_srt.name != srt_name:
+            continue
+
+        relative_dir = directory.relative_to(input_root)
+        discovered_items.append(
+            BatchInputItem(
+                source_mp4=source_mp4,
+                source_srt=source_srt,
+                relative_dir=relative_dir,
+            )
+        )
+
+    if not discovered_items:
+        raise FileNotFoundError(f"No folders with exactly one MP4 and one SRT were found under {input_root}.")
+
+    return discovered_items
+
+
+def _sorted_media_files(directory: Path, pattern: str) -> list[Path]:
+    return sorted(
+        (path for path in directory.glob(pattern) if path.is_file()),
+        key=lambda item: natural_sort_key(item.name),
+    )
+
+
+def _batch_directory_sort_key(path: Path) -> list[object]:
+    return natural_sort_key(path.as_posix())
+
+
+def _resolve_batch_output_dir(output_root: Path, relative_dir: Path) -> Path:
+    if relative_dir == Path("."):
+        return output_root
+    return output_root / relative_dir
+
+
 def process_batch(
     input_root: Path,
     output_root: Path,
-    source_name: str,
+    source_name: str | None,
     config: PipelineConfig,
     srt_name: str | None = None,
     template_path: Path | None = None,
     workbook_output: Path | None = None,
 ) -> list[ProcessedItem]:
-    if not input_root.exists():
-        raise FileNotFoundError(f"Input root not found: {input_root}")
-
-    child_directories = sorted(
-        [path for path in input_root.iterdir() if path.is_dir()],
-        key=lambda item: natural_sort_key(item.name),
+    discovered_inputs = discover_batch_inputs(
+        input_root=input_root,
+        source_name=source_name,
+        srt_name=srt_name,
     )
 
-    source_files = [directory / source_name for directory in child_directories if (directory / source_name).exists()]
-    if not source_files:
-        raise FileNotFoundError(
-            f"No source files named {source_name} were found under {input_root}."
-        )
-
     processed_items: list[ProcessedItem] = []
-    for sequence_no, source_file in enumerate(source_files, start=1):
-        output_dir = output_root / source_file.parent.name
+    for sequence_no, batch_item in enumerate(discovered_inputs, start=1):
+        output_dir = _resolve_batch_output_dir(output_root, batch_item.relative_dir)
         processed_items.append(
             process_single_video(
-                source_mp4=source_file,
+                source_mp4=batch_item.source_mp4,
                 output_dir=output_dir,
                 sequence_no=sequence_no,
                 config=config,
-                source_srt=discover_srt_path(source_mp4=source_file, srt_name=srt_name),
+                source_srt=batch_item.source_srt,
                 template_path=None,
                 workbook_output=None,
             )
@@ -417,6 +479,14 @@ def process_batch(
                     "segment_count": len(item.segments),
                 }
                 for item in processed_items
+            ],
+            "discovered_inputs": [
+                {
+                    "source_mp4": str(batch_item.source_mp4),
+                    "source_srt": str(batch_item.source_srt),
+                    "relative_dir": str(batch_item.relative_dir),
+                }
+                for batch_item in discovered_inputs
             ],
         },
     )

@@ -26,12 +26,15 @@ def build_parser() -> argparse.ArgumentParser:
     single_parser.add_argument("--language", type=str, default=None, help="Override ASR language, for example en or en-US.")
     single_parser.add_argument("--asr-provider", type=str, default=None, help="Override ASR provider, for example faster-whisper or azure-speech.")
 
-    batch_parser = subparsers.add_parser("batch", help="Process multiple child folders under one root.")
+    batch_parser = subparsers.add_parser(
+        "batch",
+        help="Recursively process folders that each contain exactly one MP4 and one SRT.",
+    )
     batch_parser.add_argument("--config", type=Path, default=Path("pipeline_config.json"), help="Path to pipeline_config.json.")
-    batch_parser.add_argument("--input-root", type=Path, required=True, help="Root folder containing numbered child folders.")
-    batch_parser.add_argument("--output-root", type=Path, required=True, help="Root output folder.")
-    batch_parser.add_argument("--source-name", type=str, default="02.mp4", help="Per-folder source video filename.")
-    batch_parser.add_argument("--srt-name", type=str, default=None, help="Optional per-folder SRT filename. If omitted, the tool auto-discovers a sidecar SRT.")
+    batch_parser.add_argument("--input-root", type=Path, required=True, help="Root folder to scan recursively for per-folder MP4 + SRT pairs.")
+    batch_parser.add_argument("--output-root", type=Path, required=True, help="Root output folder. Input-relative subfolders are mirrored here.")
+    batch_parser.add_argument("--source-name", type=str, default=None, help="Optional filter: only process folders whose single MP4 matches this filename.")
+    batch_parser.add_argument("--srt-name", type=str, default=None, help="Optional filter: only process folders whose single SRT matches this filename.")
     batch_parser.add_argument("--template", type=Path, default=None, help="Optional Excel template. Defaults to dubbing.xlsx when present.")
     batch_parser.add_argument("--workbook-output", type=Path, default=None, help="Optional merged workbook output path.")
     batch_parser.add_argument("--language", type=str, default=None, help="Override ASR language, for example en or en-US.")

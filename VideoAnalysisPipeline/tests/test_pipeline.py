@@ -1,13 +1,106 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 from video_analysis_pipeline.config import SegmentationConfig
 from video_analysis_pipeline.models import Segment, SubtitleSpan, TranscriptUtterance, WordTiming
-from video_analysis_pipeline.pipeline import _build_leading_title_segment
+from video_analysis_pipeline.pipeline import (
+    ProcessedItem,
+    _build_leading_title_segment,
+    discover_batch_inputs,
+    process_batch,
+)
 
 
 class PipelineTests(unittest.TestCase):
+    def test_discover_batch_inputs_recurses_and_keeps_relative_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            input_root = Path(tmp_dir) / "input"
+            first_job = input_root / "1"
+            second_job = input_root / "nested" / "10"
+            first_job.mkdir(parents=True)
+            second_job.mkdir(parents=True)
+            (first_job / "02.mp4").write_bytes(b"fake")
+            (first_job / "02.srt").write_text("", encoding="utf-8")
+            (second_job / "lesson.mp4").write_bytes(b"fake")
+            (second_job / "lesson.srt").write_text("", encoding="utf-8")
+
+            items = discover_batch_inputs(input_root)
+
+            self.assertEqual(len(items), 2)
+            self.assertEqual(items[0].source_mp4.relative_to(input_root), Path("1") / "02.mp4")
+            self.assertEqual(items[0].source_srt.relative_to(input_root), Path("1") / "02.srt")
+            self.assertEqual(items[0].relative_dir, Path("1"))
+            self.assertEqual(items[1].source_mp4.relative_to(input_root), Path("nested") / "10" / "lesson.mp4")
+            self.assertEqual(items[1].source_srt.relative_to(input_root), Path("nested") / "10" / "lesson.srt")
+            self.assertEqual(items[1].relative_dir, Path("nested") / "10")
+
+    def test_discover_batch_inputs_raises_when_folder_does_not_have_exact_pair(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            input_root = Path(tmp_dir) / "input"
+            invalid_job = input_root / "broken"
+            invalid_job.mkdir(parents=True)
+            (invalid_job / "02.mp4").write_bytes(b"fake")
+
+            with self.assertRaisesRegex(RuntimeError, "exactly one MP4 and one SRT"):
+                discover_batch_inputs(input_root)
+
+    def test_process_batch_mirrors_relative_output_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            input_root = Path(tmp_dir) / "input"
+            output_root = Path(tmp_dir) / "output"
+            nested_job = input_root / "season1" / "episode2"
+            nested_job.mkdir(parents=True)
+            source_mp4 = nested_job / "clip.mp4"
+            source_srt = nested_job / "clip.srt"
+            source_mp4.write_bytes(b"fake")
+            source_srt.write_text("", encoding="utf-8")
+            calls: list[tuple[Path, Path, Path, int]] = []
+
+            def fake_process_single_video(
+                source_mp4: Path,
+                output_dir: Path,
+                sequence_no: int,
+                config: object,
+                source_srt: Path | None = None,
+                template_path: Path | None = None,
+                workbook_output: Path | None = None,
+                transcriber: object | None = None,
+            ) -> ProcessedItem:
+                assert source_srt is not None
+                calls.append((source_mp4, source_srt, output_dir, sequence_no))
+                return ProcessedItem(
+                    sequence_no=sequence_no,
+                    source_mp4=source_mp4,
+                    output_dir=output_dir,
+                    workbook_path=None,
+                    review_page_path=None,
+                    segments=[],
+                )
+
+            with patch("video_analysis_pipeline.pipeline.process_single_video", side_effect=fake_process_single_video), patch(
+                "video_analysis_pipeline.pipeline.write_json"
+            ):
+                results = process_batch(
+                    input_root=input_root,
+                    output_root=output_root,
+                    source_name=None,
+                    srt_name=None,
+                    config=object(),
+                    template_path=None,
+                    workbook_output=None,
+                )
+
+            self.assertEqual(len(results), 1)
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(calls[0][0], source_mp4)
+            self.assertEqual(calls[0][1], source_srt)
+            self.assertEqual(calls[0][2], output_root / "season1" / "episode2")
+            self.assertEqual(calls[0][3], 1)
+
     def test_builds_leading_title_segment_from_asr_before_first_srt(self) -> None:
         subtitle_spans = [
             SubtitleSpan(

@@ -120,18 +120,54 @@ If the SRT lives beside the MP4 and has the same stem, you can omit `--source-sr
 4. Batch Workflow
 -----------------
 
-When each child folder contains `02.mp4` and a matching SRT:
+Batch mode now scans `--input-root` recursively.
+Every folder that should be processed must contain exactly:
+
+- one `.mp4`
+- one `.srt`
+
+The tool mirrors the input-relative folder structure under `--output-root`.
+
+Example input tree:
+
+    C:\video-analysis\input
+    ├─ book-01
+    │  ├─ 02.mp4
+    │  └─ 02.srt
+    └─ unit-03
+       └─ lesson-02
+          ├─ clip.mp4
+          └─ clip.srt
+
+Run:
 
     py run_pipeline.py batch `
       --input-root "C:\video-analysis\input" `
       --output-root "C:\video-analysis\output_batch"
 
-If every child folder uses a fixed SRT filename, pass `--srt-name`:
+Output tree:
 
-    py run_pipeline.py batch `
-      --input-root "C:\video-analysis\input" `
-      --output-root "C:\video-analysis\output_batch" `
-      --srt-name "episode 01's intro.srt"
+    C:\video-analysis\output_batch
+    ├─ book-01
+    │  ├─ 01.jpg
+    │  ├─ 01.mp4
+    │  ├─ 02.mp4
+    │  ├─ 03.mp3
+    │  ├─ review.html
+    │  └─ ...
+    └─ unit-03
+       └─ lesson-02
+          ├─ 01.jpg
+          ├─ 01.mp4
+          ├─ 02.mp4
+          ├─ 03.mp3
+          ├─ review.html
+          └─ ...
+
+Optional filters:
+
+- `--source-name 02.mp4` only processes folders whose single MP4 has that filename
+- `--srt-name 02.srt` only processes folders whose single SRT has that filename
 
 
 5. How Alignment Works
@@ -175,6 +211,7 @@ Typical abnormal flags:
 - If a PowerShell command uses paths with spaces or apostrophes, always quote them.
 - Normal segments remain unchanged. Only flagged risky segments may receive targeted subtitle-timing repair.
 - `segments.json` keeps detailed quality flags and source metadata for later review.
+- In batch mode, a folder with missing or multiple MP4/SRT files fails fast instead of guessing.
 
 
 8. Recommended Production Strategy
