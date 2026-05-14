@@ -27,6 +27,7 @@ This tool takes a source MP4 and optional SRT file, then generates:
 
 The repository bootstrap script creates and uses `.video_pipeline_env` automatically when needed.
 Keep that folder local only and do not commit it because it is machine-specific and can be regenerated.
+The local `dubbing\` corpus and generated `output\` folders are also working data only and should stay out of git.
 
 
 2. ASR Modes

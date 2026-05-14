@@ -188,6 +188,253 @@ class SubtitleAlignmentTests(unittest.TestCase):
         self.assertEqual(len(segments), 1)
         self.assertEqual(segments[0].text_source, "srt")
         self.assertEqual(summary["alignment_mode"], "srt-asr-forced-alignment")
+        self.assertEqual(segments[0].text, "What time is it now?")
+
+    def test_keeps_srt_text_even_when_asr_is_similar_but_different(self) -> None:
+        utterances = [
+            TranscriptUtterance(
+                text="Can do it.",
+                start_ms=5_000,
+                end_ms=6_200,
+                words=[
+                    WordTiming(text="Can", start_ms=5_000, end_ms=5_350),
+                    WordTiming(text="do", start_ms=5_350, end_ms=5_700),
+                    WordTiming(text="it.", start_ms=5_700, end_ms=6_200),
+                ],
+            )
+        ]
+        subtitle_spans = [
+            SubtitleSpan(
+                text="I can do it.",
+                normalized_text="i can do it",
+                start_ms=4_900,
+                end_ms=6_400,
+                confidence=1.0,
+                frame_count=1,
+                source="srt",
+                raw_index=9,
+            )
+        ]
+
+        segments, summary, _ = build_segments_from_subtitles(
+            sequence_no=1,
+            subtitle_spans=subtitle_spans,
+            utterances=utterances,
+            audio_duration_ms=6_200,
+            video_duration_ms=6_400,
+            segmentation_config=SegmentationConfig(),
+            subtitle_config=SubtitleConfig(),
+        )
+
+        self.assertEqual(len(segments), 1)
+        self.assertEqual(segments[0].text, "I can do it.")
+        self.assertEqual(segments[0].text_source, "srt")
+        self.assertNotIn("subtitle_text_normalized_from_asr", segments[0].quality_flags)
+        self.assertEqual(summary["matched_segments"], 1)
+
+    def test_srt_alignment_does_not_steal_boundary_words_from_neighbor_segment(self) -> None:
+        utterances = [
+            TranscriptUtterance(
+                text="This yellow duck is for you. Said Tom.",
+                start_ms=96_640,
+                end_ms=101_400,
+                words=[
+                    WordTiming(text="This", start_ms=96_640, end_ms=97_760),
+                    WordTiming(text="yellow", start_ms=97_760, end_ms=98_120),
+                    WordTiming(text="duck", start_ms=98_120, end_ms=98_640),
+                    WordTiming(text="is", start_ms=98_640, end_ms=99_120),
+                    WordTiming(text="for", start_ms=99_120, end_ms=99_440),
+                    WordTiming(text="you.", start_ms=99_440, end_ms=99_900),
+                    WordTiming(text="Said", start_ms=100_600, end_ms=101_020),
+                    WordTiming(text="Tom.", start_ms=101_020, end_ms=101_400),
+                ],
+            ),
+            TranscriptUtterance(
+                text="This green duck is for you too. Said Holly.",
+                start_ms=102_200,
+                end_ms=109_380,
+                words=[
+                    WordTiming(text="This", start_ms=102_200, end_ms=102_940),
+                    WordTiming(text="green", start_ms=102_940, end_ms=103_500),
+                    WordTiming(text="duck", start_ms=103_500, end_ms=104_280),
+                    WordTiming(text="is", start_ms=104_280, end_ms=105_120),
+                    WordTiming(text="for", start_ms=105_120, end_ms=105_420),
+                    WordTiming(text="you", start_ms=105_420, end_ms=105_820),
+                    WordTiming(text="too.", start_ms=105_820, end_ms=106_460),
+                    WordTiming(text="Said", start_ms=107_600, end_ms=108_160),
+                    WordTiming(text="Holly.", start_ms=108_160, end_ms=109_380),
+                ],
+            ),
+        ]
+        subtitle_spans = [
+            SubtitleSpan(
+                text="‘This yellow duck is for you,’ said Tom.",
+                normalized_text="this yellow duck is for you said tom",
+                start_ms=97_700,
+                end_ms=102_500,
+                confidence=1.0,
+                frame_count=1,
+                source="srt",
+                raw_index=20,
+            ),
+            SubtitleSpan(
+                text="This green duck is for you, too,’ said Holly.",
+                normalized_text="this green duck is for you too said holly",
+                start_ms=102_500,
+                end_ms=109_466,
+                confidence=1.0,
+                frame_count=1,
+                source="srt",
+                raw_index=21,
+            ),
+        ]
+
+        segments, summary, _ = build_segments_from_subtitles(
+            sequence_no=1,
+            subtitle_spans=subtitle_spans,
+            utterances=utterances,
+            audio_duration_ms=110_367,
+            video_duration_ms=110_318,
+            segmentation_config=SegmentationConfig(),
+            subtitle_config=SubtitleConfig(),
+        )
+
+        self.assertEqual(len(segments), 2)
+        self.assertEqual(segments[0].source_word_range, [0, 7])
+        self.assertEqual(segments[1].source_word_range, [8, 16])
+        self.assertEqual(segments[0].text, "‘This yellow duck is for you,’ said Tom.")
+        self.assertEqual(segments[1].text, "This green duck is for you, too,’ said Holly.")
+        self.assertEqual(summary["matched_segments"], 2)
+
+    def test_srt_short_span_can_backtrack_to_early_boundary_words(self) -> None:
+        utterances = [
+            TranscriptUtterance(
+                text="Here comes everyone. Here comes one boy.",
+                start_ms=15_240,
+                end_ms=24_100,
+                words=[
+                    WordTiming(text="Here", start_ms=15_240, end_ms=15_580),
+                    WordTiming(text="comes", start_ms=15_580, end_ms=16_200),
+                    WordTiming(text="everyone.", start_ms=16_200, end_ms=20_140),
+                    WordTiming(text="Here", start_ms=21_480, end_ms=22_480),
+                    WordTiming(text="comes", start_ms=22_480, end_ms=22_940),
+                    WordTiming(text="one", start_ms=22_940, end_ms=23_560),
+                    WordTiming(text="boy.", start_ms=23_560, end_ms=24_100),
+                ],
+            )
+        ]
+        subtitle_spans = [
+            SubtitleSpan(
+                text="here comes ...",
+                normalized_text="here comes",
+                start_ms=17_700,
+                end_ms=18_566,
+                confidence=1.0,
+                frame_count=1,
+                source="srt",
+                raw_index=5,
+            ),
+            SubtitleSpan(
+                text="everyone!",
+                normalized_text="everyone",
+                start_ms=19_733,
+                end_ms=20_800,
+                confidence=1.0,
+                frame_count=1,
+                source="srt",
+                raw_index=6,
+            ),
+            SubtitleSpan(
+                text="Here comes one boy,",
+                normalized_text="here comes one boy",
+                start_ms=22_066,
+                end_ms=24_566,
+                confidence=1.0,
+                frame_count=1,
+                source="srt",
+                raw_index=7,
+            ),
+        ]
+
+        segments, summary, _ = build_segments_from_subtitles(
+            sequence_no=1,
+            subtitle_spans=subtitle_spans,
+            utterances=utterances,
+            audio_duration_ms=70_082,
+            video_duration_ms=70_066,
+            segmentation_config=SegmentationConfig(),
+            subtitle_config=SubtitleConfig(),
+        )
+
+        self.assertEqual(len(segments), 3)
+        self.assertEqual(segments[0].source_word_range, [0, 1])
+        self.assertEqual(segments[1].source_word_range, [2, 2])
+        self.assertEqual(segments[2].source_word_range, [3, 6])
+        self.assertGreater(segments[0].duration_ms, 500)
+        self.assertEqual(summary["matched_segments"], 3)
+
+    def test_relaxes_srt_end_boundary_when_gap_allows(self) -> None:
+        utterances = [
+            TranscriptUtterance(
+                text="Miss Millers in the playground.",
+                start_ms=55_940,
+                end_ms=58_580,
+                words=[
+                    WordTiming(text="Miss", start_ms=55_940, end_ms=56_920),
+                    WordTiming(text="Millers", start_ms=56_920, end_ms=57_540),
+                    WordTiming(text="in", start_ms=57_540, end_ms=57_940),
+                    WordTiming(text="the", start_ms=57_940, end_ms=58_120),
+                    WordTiming(text="playground.", start_ms=58_120, end_ms=58_580),
+                ],
+            ),
+            TranscriptUtterance(
+                text="She's already there.",
+                start_ms=59_760,
+                end_ms=61_540,
+                words=[
+                    WordTiming(text="She's", start_ms=59_760, end_ms=60_440),
+                    WordTiming(text="already", start_ms=60_440, end_ms=60_960),
+                    WordTiming(text="there.", start_ms=60_960, end_ms=61_540),
+                ],
+            ),
+        ]
+        subtitle_spans = [
+            SubtitleSpan(
+                text="Miss Miller’s in the playground.",
+                normalized_text="miss miller's in the playground",
+                start_ms=56_666,
+                end_ms=59_233,
+                confidence=1.0,
+                frame_count=1,
+                source="srt",
+                raw_index=16,
+            ),
+            SubtitleSpan(
+                text="She’s already there.",
+                normalized_text="she's already there",
+                start_ms=60_066,
+                end_ms=61_866,
+                confidence=1.0,
+                frame_count=1,
+                source="srt",
+                raw_index=17,
+            ),
+        ]
+
+        segments, summary, _ = build_segments_from_subtitles(
+            sequence_no=1,
+            subtitle_spans=subtitle_spans,
+            utterances=utterances,
+            audio_duration_ms=70_082,
+            video_duration_ms=70_066,
+            segmentation_config=SegmentationConfig(),
+            subtitle_config=SubtitleConfig(),
+        )
+
+        self.assertEqual(len(segments), 2)
+        self.assertEqual(segments[0].source_word_range, [0, 4])
+        self.assertGreaterEqual(segments[0].end_ms, 59_200)
+        self.assertEqual(summary["matched_segments"], 2)
 
     def test_repairs_only_flagged_segment_using_srt_timing(self) -> None:
         utterances = [
@@ -313,10 +560,10 @@ class SubtitleAlignmentTests(unittest.TestCase):
         )
 
         self.assertEqual(len(segments), 2)
-        self.assertIn("neighbor_boundary_drift", segments[0].quality_flags)
-        self.assertIn("neighbor_boundary_drift", segments[1].quality_flags)
         self.assertIn("edge_word_low_confidence", segments[1].quality_flags)
         self.assertIn("word_duration_outlier", segments[1].quality_flags)
+        self.assertIn("targeted_subtitle_timing_repair", segments[1].quality_flags)
+        self.assertNotIn("neighbor_boundary_drift", segments[0].quality_flags)
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
+import re
 from statistics import fmean, median
 
 from video_analysis_pipeline.config import SegmentationConfig, SubtitleConfig
@@ -12,7 +13,11 @@ _TARGETED_REPAIR_FLAGS = {
     "alignment_risk",
     "edge_word_low_confidence",
     "word_duration_outlier",
+    "low_alignment_confidence",
 }
+_MAX_TARGETED_REPAIR_SHIFT_MS = 700
+_BOUNDARY_RELAXATION_THRESHOLD_MS = 120
+_MAX_BOUNDARY_RELAXATION_MS = 900
 
 
 @dataclass(slots=True)
@@ -37,6 +42,16 @@ class AsrWordRef:
             "end_ms": self.end_ms,
             "confidence": self.confidence,
         }
+
+
+@dataclass(slots=True)
+class AlignmentCandidate:
+    start_word_index: int
+    end_word_index: int
+    alignment_score: float
+    text_score: float
+    time_score: float
+    selection_score: float
 
 
 def flatten_asr_words(utterances: list[TranscriptUtterance]) -> list[AsrWordRef]:
@@ -88,20 +103,17 @@ def build_segments_from_subtitles(
     segments: list[Segment] = []
     matched_count = 0
     unmatched_count = 0
-    cursor_index = 0
+    alignments = _align_subtitle_spans(
+        subtitle_spans=subtitle_spans,
+        asr_words=asr_words,
+        audio_duration_ms=audio_duration_ms,
+        video_duration_ms=video_duration_ms,
+        segmentation_config=segmentation_config,
+        subtitle_config=subtitle_config,
+    )
 
-    for segment_no, subtitle_span in enumerate(subtitle_spans, start=1):
+    for segment_no, (subtitle_span, alignment) in enumerate(zip(subtitle_spans, alignments), start=1):
         default_text_source = _default_text_source(subtitle_span)
-        alignment = _align_subtitle_span(
-            subtitle_span=subtitle_span,
-            asr_words=asr_words,
-            cursor_index=cursor_index,
-            audio_duration_ms=audio_duration_ms,
-            video_duration_ms=video_duration_ms,
-            segmentation_config=segmentation_config,
-            subtitle_config=subtitle_config,
-        )
-
         if alignment is None:
             unmatched_count += 1
             segment = Segment(
@@ -120,8 +132,10 @@ def build_segments_from_subtitles(
             segments.append(segment)
             continue
 
-        start_word_index, end_word_index, score, text_score = alignment
-        cursor_index = end_word_index + 1
+        start_word_index = alignment.start_word_index
+        end_word_index = alignment.end_word_index
+        score = alignment.alignment_score
+        text_score = alignment.text_score
         matched_count += 1
         matched_words = asr_words[start_word_index : end_word_index + 1]
         matched_utterance_indexes = sorted({word.utterance_index for word in matched_words})
@@ -168,6 +182,10 @@ def build_segments_from_subtitles(
     _remove_segment_overlap(segments)
     _apply_segment_quality_checks(segments, subtitle_spans, asr_words)
     _repair_flagged_segments(segments, subtitle_spans)
+    _relax_srt_segment_boundaries(segments, subtitle_spans)
+    _refresh_shift_flags(segments, subtitle_spans, subtitle_config)
+    _clear_timing_quality_flags(segments)
+    _apply_segment_quality_checks(segments, subtitle_spans, asr_words)
     return (
         segments,
         {
@@ -180,7 +198,199 @@ def build_segments_from_subtitles(
     )
 
 
-def _align_subtitle_span(
+def _align_subtitle_spans(
+    subtitle_spans: list[SubtitleSpan],
+    asr_words: list[AsrWordRef],
+    audio_duration_ms: int,
+    video_duration_ms: int,
+    segmentation_config: SegmentationConfig,
+    subtitle_config: SubtitleConfig,
+) -> list[AlignmentCandidate | None]:
+    if subtitle_spans and all(span.source == "srt" for span in subtitle_spans):
+        return _align_srt_subtitle_spans(
+            subtitle_spans=subtitle_spans,
+            asr_words=asr_words,
+            audio_duration_ms=audio_duration_ms,
+            video_duration_ms=video_duration_ms,
+            segmentation_config=segmentation_config,
+            subtitle_config=subtitle_config,
+        )
+
+    alignments: list[AlignmentCandidate | None] = []
+    cursor_index = 0
+    for subtitle_span in subtitle_spans:
+        alignment = _align_subtitle_span_greedily(
+            subtitle_span=subtitle_span,
+            asr_words=asr_words,
+            cursor_index=cursor_index,
+            audio_duration_ms=audio_duration_ms,
+            video_duration_ms=video_duration_ms,
+            segmentation_config=segmentation_config,
+            subtitle_config=subtitle_config,
+        )
+        alignments.append(alignment)
+        if alignment is not None:
+            cursor_index = alignment.end_word_index + 1
+    return alignments
+
+
+def _align_srt_subtitle_spans(
+    subtitle_spans: list[SubtitleSpan],
+    asr_words: list[AsrWordRef],
+    audio_duration_ms: int,
+    video_duration_ms: int,
+    segmentation_config: SegmentationConfig,
+    subtitle_config: SubtitleConfig,
+) -> list[AlignmentCandidate | None]:
+    alignments: list[AlignmentCandidate | None] = [None] * len(subtitle_spans)
+    candidates_by_index = [
+        _collect_alignment_candidates(
+            subtitle_span=subtitle_span,
+            asr_words=asr_words,
+            cursor_index=0,
+            audio_duration_ms=audio_duration_ms,
+            video_duration_ms=video_duration_ms,
+            segmentation_config=segmentation_config,
+            subtitle_config=subtitle_config,
+        )
+        for subtitle_span in subtitle_spans
+    ]
+
+    run_start: int | None = None
+    for index, candidates in enumerate(candidates_by_index):
+        if candidates:
+            if run_start is None:
+                run_start = index
+            continue
+
+        if run_start is not None:
+            _resolve_srt_alignment_run(
+                alignments=alignments,
+                subtitle_spans=subtitle_spans,
+                candidates_by_index=candidates_by_index,
+                run_start=run_start,
+                run_end=index - 1,
+                asr_words=asr_words,
+                audio_duration_ms=audio_duration_ms,
+                video_duration_ms=video_duration_ms,
+                segmentation_config=segmentation_config,
+                subtitle_config=subtitle_config,
+            )
+            run_start = None
+
+    if run_start is not None:
+        _resolve_srt_alignment_run(
+            alignments=alignments,
+            subtitle_spans=subtitle_spans,
+            candidates_by_index=candidates_by_index,
+            run_start=run_start,
+            run_end=len(subtitle_spans) - 1,
+            asr_words=asr_words,
+            audio_duration_ms=audio_duration_ms,
+            video_duration_ms=video_duration_ms,
+            segmentation_config=segmentation_config,
+            subtitle_config=subtitle_config,
+        )
+
+    return alignments
+
+
+def _resolve_srt_alignment_run(
+    alignments: list[AlignmentCandidate | None],
+    subtitle_spans: list[SubtitleSpan],
+    candidates_by_index: list[list[AlignmentCandidate]],
+    run_start: int,
+    run_end: int,
+    asr_words: list[AsrWordRef],
+    audio_duration_ms: int,
+    video_duration_ms: int,
+    segmentation_config: SegmentationConfig,
+    subtitle_config: SubtitleConfig,
+) -> None:
+    run_candidates = candidates_by_index[run_start : run_end + 1]
+    resolved_run = _select_best_candidate_path(run_candidates)
+    if resolved_run is None:
+        cursor_index = 0
+        if run_start > 0 and alignments[run_start - 1] is not None:
+            cursor_index = alignments[run_start - 1].end_word_index + 1
+        for relative_index, subtitle_span in enumerate(subtitle_spans[run_start : run_end + 1], start=run_start):
+            alignment = _align_subtitle_span_greedily(
+                subtitle_span=subtitle_span,
+                asr_words=asr_words,
+                cursor_index=cursor_index,
+                audio_duration_ms=audio_duration_ms,
+                video_duration_ms=video_duration_ms,
+                segmentation_config=segmentation_config,
+                subtitle_config=subtitle_config,
+            )
+            alignments[relative_index] = alignment
+            if alignment is not None:
+                cursor_index = alignment.end_word_index + 1
+        return
+
+    for offset, alignment in enumerate(resolved_run, start=run_start):
+        alignments[offset] = alignment
+
+
+def _select_best_candidate_path(
+    candidates_by_span: list[list[AlignmentCandidate]],
+) -> list[AlignmentCandidate] | None:
+    if not candidates_by_span:
+        return []
+
+    score_rows: list[list[float]] = [
+        [float("-inf")] * len(candidates)
+        for candidates in candidates_by_span
+    ]
+    previous_rows: list[list[int | None]] = [
+        [None] * len(candidates)
+        for candidates in candidates_by_span
+    ]
+
+    for candidate_index, candidate in enumerate(candidates_by_span[0]):
+        score_rows[0][candidate_index] = candidate.selection_score
+
+    for span_index in range(1, len(candidates_by_span)):
+        current_candidates = candidates_by_span[span_index]
+        previous_candidates = candidates_by_span[span_index - 1]
+        for current_index, current_candidate in enumerate(current_candidates):
+            best_score = float("-inf")
+            best_previous_index: int | None = None
+            for previous_index, previous_candidate in enumerate(previous_candidates):
+                previous_score = score_rows[span_index - 1][previous_index]
+                if previous_score == float("-inf"):
+                    continue
+                if previous_candidate.end_word_index >= current_candidate.start_word_index:
+                    continue
+                combined_score = previous_score + current_candidate.selection_score
+                if combined_score > best_score:
+                    best_score = combined_score
+                    best_previous_index = previous_index
+            if best_previous_index is None:
+                continue
+            score_rows[span_index][current_index] = best_score
+            previous_rows[span_index][current_index] = best_previous_index
+
+    final_scores = score_rows[-1]
+    best_final_score = max(final_scores, default=float("-inf"))
+    if best_final_score == float("-inf"):
+        return None
+
+    best_final_index = final_scores.index(best_final_score)
+    path: list[AlignmentCandidate] = []
+    span_index = len(candidates_by_span) - 1
+    current_index: int | None = best_final_index
+    while span_index >= 0 and current_index is not None:
+        path.append(candidates_by_span[span_index][current_index])
+        current_index = previous_rows[span_index][current_index]
+        span_index -= 1
+    path.reverse()
+    if len(path) != len(candidates_by_span):
+        return None
+    return path
+
+
+def _align_subtitle_span_greedily(
     subtitle_span: SubtitleSpan,
     asr_words: list[AsrWordRef],
     cursor_index: int,
@@ -188,29 +398,58 @@ def _align_subtitle_span(
     video_duration_ms: int,
     segmentation_config: SegmentationConfig,
     subtitle_config: SubtitleConfig,
-) -> tuple[int, int, float, float] | None:
+) -> AlignmentCandidate | None:
+    candidates = _collect_alignment_candidates(
+        subtitle_span=subtitle_span,
+        asr_words=asr_words,
+        cursor_index=cursor_index,
+        audio_duration_ms=audio_duration_ms,
+        video_duration_ms=video_duration_ms,
+        segmentation_config=segmentation_config,
+        subtitle_config=subtitle_config,
+    )
+    if not candidates:
+        return None
+    return candidates[0]
+
+
+def _collect_alignment_candidates(
+    subtitle_span: SubtitleSpan,
+    asr_words: list[AsrWordRef],
+    cursor_index: int,
+    audio_duration_ms: int,
+    video_duration_ms: int,
+    segmentation_config: SegmentationConfig,
+    subtitle_config: SubtitleConfig,
+) -> list[AlignmentCandidate]:
     query_text = subtitle_span.normalized_text
     query_tokens = [token for token in query_text.split() if token]
     if not query_tokens:
-        return None
+        return []
 
     expected_audio_start = _scale_video_to_audio(subtitle_span.start_ms, audio_duration_ms, video_duration_ms)
     expected_audio_end = _scale_video_to_audio(subtitle_span.end_ms, audio_duration_ms, video_duration_ms)
     search_window_ms = subtitle_config.alignment_search_window_ms
+    backward_search_ms = search_window_ms
+    forward_search_ms = search_window_ms
+    candidate_backtrack_words = 0
+    if subtitle_span.source == "srt":
+        backward_search_ms += min(1_200, max(400, subtitle_span.duration_ms // 2))
+        candidate_backtrack_words = 2 if len(query_tokens) <= 3 else 1
 
     candidate_indexes = [
         word.global_index
         for word in asr_words
         if word.global_index >= cursor_index
-        and word.end_ms >= expected_audio_start - search_window_ms
-        and word.start_ms <= expected_audio_end + search_window_ms
+        and word.end_ms >= expected_audio_start - backward_search_ms
+        and word.start_ms <= expected_audio_end + forward_search_ms
     ]
 
     if not candidate_indexes:
         candidate_start = min(cursor_index, max(0, len(asr_words) - 1))
         candidate_end = min(len(asr_words) - 1, candidate_start + subtitle_config.alignment_max_words_ahead)
     else:
-        candidate_start = candidate_indexes[0]
+        candidate_start = max(cursor_index, candidate_indexes[0] - candidate_backtrack_words)
         candidate_end = min(
             len(asr_words) - 1,
             max(candidate_indexes[-1], candidate_start + len(query_tokens) + 2),
@@ -220,7 +459,7 @@ def _align_subtitle_span(
     min_window_length = max(1, len(query_tokens) - 2)
     max_window_length = max(min_window_length, len(query_tokens) + 4)
 
-    best: tuple[int, int, float, float] | None = None
+    candidates: list[AlignmentCandidate] = []
 
     for start_index in range(candidate_start, candidate_end + 1):
         for window_length in range(min_window_length, max_window_length + 1):
@@ -228,9 +467,11 @@ def _align_subtitle_span(
             if end_index > candidate_end:
                 break
 
-            candidate_text = " ".join(word.normalized_text for word in asr_words[start_index : end_index + 1])
+            candidate_words = asr_words[start_index : end_index + 1]
+            candidate_tokens = [word.normalized_text for word in candidate_words]
+            candidate_text = " ".join(candidate_tokens)
             text_score = _text_score(query_text, candidate_text)
-            if best is not None and text_score + 5 < best[3]:
+            if text_score < subtitle_config.alignment_min_text_score:
                 continue
 
             time_score = _time_score(
@@ -240,14 +481,82 @@ def _align_subtitle_span(
                 candidate_end=asr_words[end_index].end_ms,
                 search_window_ms=search_window_ms,
             )
-            total_score = text_score * 0.75 + time_score * 0.25
+            alignment_score = text_score * 0.75 + time_score * 0.25
+            selection_score = alignment_score
+            if subtitle_span.source == "srt":
+                selection_score += _srt_selection_bonus(
+                    query_tokens=query_tokens,
+                    candidate_tokens=candidate_tokens,
+                )
+            candidates.append(
+                AlignmentCandidate(
+                    start_word_index=start_index,
+                    end_word_index=end_index,
+                    alignment_score=alignment_score,
+                    text_score=text_score,
+                    time_score=time_score,
+                    selection_score=selection_score,
+                )
+            )
 
-            if best is None or total_score > best[2]:
-                best = (start_index, end_index, total_score, text_score)
+    candidates.sort(
+        key=lambda item: (
+            item.selection_score,
+            item.text_score,
+            item.time_score,
+            -item.start_word_index,
+            -item.end_word_index,
+        ),
+        reverse=True,
+    )
+    return candidates[:12]
 
-    if best is None or best[3] < subtitle_config.alignment_min_text_score:
-        return None
-    return best
+
+def _srt_selection_bonus(
+    query_tokens: list[str],
+    candidate_tokens: list[str],
+) -> float:
+    if not query_tokens or not candidate_tokens:
+        return 0.0
+
+    prefix_matches = _matching_prefix_token_count(query_tokens, candidate_tokens)
+    suffix_matches = _matching_suffix_token_count(query_tokens, candidate_tokens)
+
+    bonus = 0.0
+    if query_tokens == candidate_tokens:
+        bonus += 16.0
+
+    bonus += min(6.0, prefix_matches * 3.0)
+    bonus += min(6.0, suffix_matches * 3.0)
+
+    if prefix_matches == 0:
+        bonus -= 6.0
+    if suffix_matches == 0:
+        bonus -= 6.0
+
+    return bonus
+
+
+def _matching_prefix_token_count(left: list[str], right: list[str]) -> int:
+    count = 0
+    for left_token, right_token in zip(left, right):
+        if _token_signature(left_token) != _token_signature(right_token):
+            break
+        count += 1
+    return count
+
+
+def _matching_suffix_token_count(left: list[str], right: list[str]) -> int:
+    count = 0
+    for left_token, right_token in zip(reversed(left), reversed(right)):
+        if _token_signature(left_token) != _token_signature(right_token):
+            break
+        count += 1
+    return count
+
+
+def _token_signature(token: str) -> str:
+    return re.sub(r"[^0-9a-z]+", "", token.casefold())
 
 
 def _scale_audio_to_video(milliseconds: int, audio_duration_ms: int, video_duration_ms: int) -> int:
@@ -319,6 +628,9 @@ def _choose_segment_text(
     min_text_score: float,
     subtitle_source: str,
 ) -> tuple[str, str, list[str]]:
+    if subtitle_source == "srt":
+        return subtitle_text, subtitle_source, []
+
     try:
         from rapidfuzz import fuzz
     except ImportError as exc:
@@ -460,7 +772,8 @@ def _repair_flagged_segments(
     segments: list[Segment],
     subtitle_spans: list[SubtitleSpan],
 ) -> None:
-    for index, segment in enumerate(segments):
+    for index in range(len(segments) - 1, -1, -1):
+        segment = segments[index]
         if segment.source_subtitle_index is None:
             continue
         if not _should_target_segment_for_repair(segment):
@@ -470,30 +783,193 @@ def _repair_flagged_segments(
         if subtitle_span.source != "srt":
             continue
 
-        minimum_start = 0 if index == 0 else segments[index - 1].end_ms + 1
-        maximum_end = subtitle_span.end_ms
+        segment_minimum_start = 0
+        if index > 0:
+            segment_minimum_start = segments[index - 1].end_ms + 1
+            previous_segment = segments[index - 1]
+            previous_subtitle_index = previous_segment.source_subtitle_index
+            subtitle_minimum_start = 0
+            if previous_subtitle_index is not None:
+                previous_subtitle = subtitle_spans[previous_subtitle_index]
+                if previous_subtitle.source == "srt":
+                    subtitle_minimum_start = previous_subtitle.end_ms + 1
+            else:
+                subtitle_minimum_start = 0
+        else:
+            subtitle_minimum_start = 0
+
+        segment_maximum_end = subtitle_span.end_ms
+        subtitle_maximum_end = subtitle_span.end_ms
         if index < len(segments) - 1:
-            maximum_end = min(maximum_end, segments[index + 1].start_ms - 1)
-        if maximum_end <= minimum_start:
+            next_segment = segments[index + 1]
+            segment_maximum_end = min(segment_maximum_end, next_segment.start_ms - 1)
+            next_subtitle_index = next_segment.source_subtitle_index
+            if next_subtitle_index is not None:
+                next_subtitle = subtitle_spans[next_subtitle_index]
+                if next_subtitle.source == "srt":
+                    subtitle_maximum_end = min(subtitle_maximum_end, next_subtitle.start_ms - 1)
+        if segment_maximum_end <= segment_minimum_start and subtitle_maximum_end <= subtitle_minimum_start:
             continue
 
-        updated_start = segment.start_ms
-        updated_end = segment.end_ms
-        changed = False
-
-        if abs(segment.start_ms - subtitle_span.start_ms) >= 250:
-            updated_start = min(max(subtitle_span.start_ms, minimum_start), maximum_end - 1)
-            changed = True
-        if abs(segment.end_ms - subtitle_span.end_ms) >= 250:
-            updated_end = max(min(subtitle_span.end_ms, maximum_end), updated_start + 1)
-            changed = True
-
-        if not changed:
+        updated_start, updated_end = _choose_repaired_srt_timing(
+            segment=segment,
+            subtitle_span=subtitle_span,
+            segment_minimum_start=segment_minimum_start,
+            segment_maximum_end=segment_maximum_end,
+            subtitle_minimum_start=subtitle_minimum_start,
+            subtitle_maximum_end=subtitle_maximum_end,
+        )
+        if updated_start == segment.start_ms and updated_end == segment.end_ms:
             continue
 
         segment.start_ms = updated_start
         segment.end_ms = max(updated_start + 1, updated_end)
         _append_quality_flag(segment, "targeted_subtitle_timing_repair")
+
+
+def _choose_repaired_srt_timing(
+    segment: Segment,
+    subtitle_span: SubtitleSpan,
+    segment_minimum_start: int,
+    segment_maximum_end: int,
+    subtitle_minimum_start: int,
+    subtitle_maximum_end: int,
+) -> tuple[int, int]:
+    start_shift = abs(segment.start_ms - subtitle_span.start_ms)
+    end_shift = abs(segment.end_ms - subtitle_span.end_ms)
+    large_shift = start_shift > _MAX_TARGETED_REPAIR_SHIFT_MS or end_shift > _MAX_TARGETED_REPAIR_SHIFT_MS
+    subtitle_duration = subtitle_span.duration_ms
+    prefix_matches, suffix_matches, required_matches = _segment_boundary_match_quality(segment, subtitle_span)
+    strong_boundary_match = prefix_matches >= required_matches and suffix_matches >= required_matches
+
+    should_fallback_to_subtitle = (
+        "alignment_failed" in segment.quality_flags
+        or "low_alignment_confidence" in segment.quality_flags
+        or not strong_boundary_match
+        or (
+            large_shift
+            and subtitle_duration <= 2_500
+            and _should_target_segment_for_repair(segment)
+        )
+        or (
+            "neighbor_boundary_drift" in segment.quality_flags
+            and large_shift
+            and subtitle_duration <= 2_200
+        )
+        or (
+            "alignment_risk" in segment.quality_flags
+            and large_shift
+            and subtitle_duration <= 1_800
+        )
+    )
+
+    if should_fallback_to_subtitle:
+        updated_start = max(subtitle_minimum_start, subtitle_span.start_ms)
+        updated_end = min(subtitle_maximum_end, subtitle_span.end_ms)
+        if updated_end <= updated_start:
+            updated_end = min(subtitle_maximum_end, max(updated_start + 1, segment.end_ms))
+        return updated_start, max(updated_start + 1, updated_end)
+
+    updated_start = segment.start_ms
+    updated_end = segment.end_ms
+
+    if (
+        segment.start_ms > subtitle_span.start_ms + _BOUNDARY_RELAXATION_THRESHOLD_MS
+        and segment.start_ms - subtitle_span.start_ms <= _MAX_BOUNDARY_RELAXATION_MS
+    ):
+        updated_start = max(segment_minimum_start, subtitle_span.start_ms)
+
+    if (
+        subtitle_span.end_ms > segment.end_ms + _BOUNDARY_RELAXATION_THRESHOLD_MS
+        and subtitle_span.end_ms - segment.end_ms <= _MAX_BOUNDARY_RELAXATION_MS
+    ):
+        updated_end = min(segment_maximum_end, subtitle_span.end_ms)
+
+    if updated_end <= updated_start:
+        updated_end = min(segment_maximum_end, max(updated_start + 1, segment.end_ms))
+        updated_start = min(updated_start, updated_end - 1)
+
+    return updated_start, max(updated_start + 1, updated_end)
+
+
+def _relax_srt_segment_boundaries(
+    segments: list[Segment],
+    subtitle_spans: list[SubtitleSpan],
+) -> None:
+    for index, segment in enumerate(segments):
+        if segment.source_subtitle_index is None:
+            continue
+
+        subtitle_span = subtitle_spans[segment.source_subtitle_index]
+        if subtitle_span.source != "srt":
+            continue
+
+        minimum_start = 0 if index == 0 else segments[index - 1].end_ms + 1
+        maximum_end = subtitle_span.end_ms if index == len(segments) - 1 else segments[index + 1].start_ms - 1
+        if maximum_end <= minimum_start:
+            continue
+
+        updated_start = segment.start_ms
+        updated_end = segment.end_ms
+
+        if (
+            segment.start_ms > subtitle_span.start_ms + _BOUNDARY_RELAXATION_THRESHOLD_MS
+            and segment.start_ms - subtitle_span.start_ms <= _MAX_BOUNDARY_RELAXATION_MS
+        ):
+            updated_start = max(minimum_start, subtitle_span.start_ms)
+
+        if (
+            subtitle_span.end_ms > segment.end_ms + _BOUNDARY_RELAXATION_THRESHOLD_MS
+            and subtitle_span.end_ms - segment.end_ms <= _MAX_BOUNDARY_RELAXATION_MS
+        ):
+            updated_end = min(maximum_end, subtitle_span.end_ms)
+
+        if updated_end <= updated_start:
+            updated_end = min(maximum_end, max(updated_start + 1, segment.end_ms))
+            updated_start = min(updated_start, updated_end - 1)
+
+        segment.start_ms = updated_start
+        segment.end_ms = max(updated_start + 1, updated_end)
+
+
+def _segment_boundary_match_quality(
+    segment: Segment,
+    subtitle_span: SubtitleSpan,
+) -> tuple[int, int, int]:
+    query_tokens = [token for token in subtitle_span.normalized_text.split() if token]
+    segment_tokens = [token for token in normalize_subtitle_text(segment.text).split() if token]
+    if not query_tokens or not segment_tokens:
+        return 0, 0, 1
+    prefix_matches = _matching_prefix_token_count(query_tokens, segment_tokens)
+    suffix_matches = _matching_suffix_token_count(query_tokens, segment_tokens)
+    required_matches = min(2, len(query_tokens))
+    return prefix_matches, suffix_matches, required_matches
+
+
+def _refresh_shift_flags(
+    segments: list[Segment],
+    subtitle_spans: list[SubtitleSpan],
+    subtitle_config: SubtitleConfig,
+) -> None:
+    for segment in segments:
+        if segment.source_subtitle_index is None:
+            continue
+        subtitle_span = subtitle_spans[segment.source_subtitle_index]
+        segment.quality_flags = [
+            flag
+            for flag in segment.quality_flags
+            if flag not in {"subtitle_start_shifted", "subtitle_end_shifted"}
+        ]
+        if abs(segment.start_ms - subtitle_span.start_ms) > subtitle_config.alignment_max_shift_ms:
+            _append_quality_flag(segment, "subtitle_start_shifted")
+        if abs(segment.end_ms - subtitle_span.end_ms) > subtitle_config.alignment_max_shift_ms:
+            _append_quality_flag(segment, "subtitle_end_shifted")
+
+
+def _clear_timing_quality_flags(segments: list[Segment]) -> None:
+    flags_to_clear = {"neighbor_boundary_drift", "repeated_phrase_duration_outlier"}
+    for segment in segments:
+        segment.quality_flags = [flag for flag in segment.quality_flags if flag not in flags_to_clear]
 
 
 def _should_target_segment_for_repair(segment: Segment) -> bool:
