@@ -181,7 +181,7 @@ def build_segments_from_subtitles(
 
     _remove_segment_overlap(segments)
     _apply_segment_quality_checks(segments, subtitle_spans, asr_words)
-    _repair_flagged_segments(segments, subtitle_spans)
+    _repair_flagged_segments(segments, subtitle_spans, asr_words)
     _relax_srt_segment_boundaries(segments, subtitle_spans)
     _refresh_shift_flags(segments, subtitle_spans, subtitle_config)
     _clear_timing_quality_flags(segments)
@@ -771,6 +771,7 @@ def _append_quality_flag(segment: Segment, flag: str) -> None:
 def _repair_flagged_segments(
     segments: list[Segment],
     subtitle_spans: list[SubtitleSpan],
+    asr_words: list[AsrWordRef],
 ) -> None:
     for index in range(len(segments) - 1, -1, -1):
         segment = segments[index]
@@ -814,6 +815,7 @@ def _repair_flagged_segments(
         updated_start, updated_end = _choose_repaired_srt_timing(
             segment=segment,
             subtitle_span=subtitle_span,
+            asr_words=asr_words,
             segment_minimum_start=segment_minimum_start,
             segment_maximum_end=segment_maximum_end,
             subtitle_minimum_start=subtitle_minimum_start,
@@ -830,6 +832,7 @@ def _repair_flagged_segments(
 def _choose_repaired_srt_timing(
     segment: Segment,
     subtitle_span: SubtitleSpan,
+    asr_words: list[AsrWordRef],
     segment_minimum_start: int,
     segment_maximum_end: int,
     subtitle_minimum_start: int,
@@ -839,7 +842,11 @@ def _choose_repaired_srt_timing(
     end_shift = abs(segment.end_ms - subtitle_span.end_ms)
     large_shift = start_shift > _MAX_TARGETED_REPAIR_SHIFT_MS or end_shift > _MAX_TARGETED_REPAIR_SHIFT_MS
     subtitle_duration = subtitle_span.duration_ms
-    prefix_matches, suffix_matches, required_matches = _segment_boundary_match_quality(segment, subtitle_span)
+    prefix_matches, suffix_matches, required_matches = _segment_boundary_match_quality(
+        segment,
+        subtitle_span,
+        asr_words,
+    )
     strong_boundary_match = prefix_matches >= required_matches and suffix_matches >= required_matches
 
     should_fallback_to_subtitle = (
@@ -935,9 +942,16 @@ def _relax_srt_segment_boundaries(
 def _segment_boundary_match_quality(
     segment: Segment,
     subtitle_span: SubtitleSpan,
+    asr_words: list[AsrWordRef],
 ) -> tuple[int, int, int]:
     query_tokens = [token for token in subtitle_span.normalized_text.split() if token]
-    segment_tokens = [token for token in normalize_subtitle_text(segment.text).split() if token]
+    segment_tokens: list[str] = []
+    if segment.source_word_range is not None:
+        start_word_index, end_word_index = segment.source_word_range
+        matched_words = asr_words[start_word_index : end_word_index + 1]
+        segment_tokens = [word.normalized_text for word in matched_words if word.normalized_text]
+    if not segment_tokens:
+        segment_tokens = [token for token in normalize_subtitle_text(segment.text).split() if token]
     if not query_tokens or not segment_tokens:
         return 0, 0, 1
     prefix_matches = _matching_prefix_token_count(query_tokens, segment_tokens)

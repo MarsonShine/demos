@@ -565,6 +565,124 @@ class SubtitleAlignmentTests(unittest.TestCase):
         self.assertIn("targeted_subtitle_timing_repair", segments[1].quality_flags)
         self.assertNotIn("neighbor_boundary_drift", segments[0].quality_flags)
 
+    def test_repairs_to_subtitle_timing_when_asr_boundary_words_are_wrong(self) -> None:
+        utterances = [
+            TranscriptUtterance(
+                text="Then, the big penguin comes back with her friends.",
+                start_ms=102_320,
+                end_ms=105_980,
+                words=[
+                    WordTiming(text="Then,", start_ms=102_320, end_ms=102_540, confidence=0.99),
+                    WordTiming(text="the", start_ms=102_960, end_ms=103_240, confidence=0.99),
+                    WordTiming(text="big", start_ms=103_240, end_ms=103_600, confidence=0.98),
+                    WordTiming(text="penguin", start_ms=103_600, end_ms=104_400, confidence=0.99),
+                    WordTiming(text="comes", start_ms=104_400, end_ms=104_760, confidence=0.99),
+                    WordTiming(text="back", start_ms=104_760, end_ms=105_180, confidence=1.00),
+                    WordTiming(text="with", start_ms=105_180, end_ms=105_440, confidence=1.00),
+                    WordTiming(text="her", start_ms=105_440, end_ms=105_640, confidence=0.99),
+                    WordTiming(text="friends.", start_ms=105_640, end_ms=105_980, confidence=1.00),
+                ],
+            ),
+            TranscriptUtterance(
+                text="Hello, Michelle.",
+                start_ms=106_780,
+                end_ms=108_220,
+                words=[
+                    WordTiming(text="Hello,", start_ms=106_780, end_ms=107_320, confidence=0.89),
+                    WordTiming(text="Michelle.", start_ms=107_800, end_ms=108_220, confidence=0.94),
+                ],
+            ),
+            TranscriptUtterance(
+                text="Do you like my snowman? Says Michelle.",
+                start_ms=108_220,
+                end_ms=112_180,
+                words=[
+                    WordTiming(text="Do", start_ms=108_220, end_ms=108_500, confidence=0.05),
+                    WordTiming(text="you", start_ms=108_500, end_ms=109_640, confidence=0.98),
+                    WordTiming(text="like", start_ms=109_640, end_ms=109_940, confidence=0.99),
+                    WordTiming(text="my", start_ms=109_940, end_ms=110_180, confidence=0.97),
+                    WordTiming(text="snowman?", start_ms=110_180, end_ms=110_960, confidence=0.85),
+                    WordTiming(text="Says", start_ms=111_480, end_ms=111_820, confidence=0.24),
+                    WordTiming(text="Michelle.", start_ms=111_820, end_ms=112_180, confidence=0.06),
+                ],
+            ),
+            TranscriptUtterance(
+                text="It's great. They say.",
+                start_ms=113_060,
+                end_ms=115_900,
+                words=[
+                    WordTiming(text="It's", start_ms=113_060, end_ms=113_640, confidence=0.84),
+                    WordTiming(text="great.", start_ms=113_640, end_ms=114_040, confidence=0.98),
+                    WordTiming(text="They", start_ms=115_220, end_ms=115_580, confidence=0.98),
+                    WordTiming(text="say.", start_ms=115_580, end_ms=115_900, confidence=1.00),
+                ],
+            ),
+        ]
+        subtitle_spans = [
+            SubtitleSpan(
+                text="Then the big penguin comes back with her friends.",
+                normalized_text="then the big penguin comes back with her friends",
+                start_ms=102_200,
+                end_ms=106_633,
+                confidence=1.0,
+                frame_count=1,
+                source="srt",
+                raw_index=26,
+            ),
+            SubtitleSpan(
+                text="Hello, Nishal.",
+                normalized_text="hello nishal",
+                start_ms=106_633,
+                end_ms=109_233,
+                confidence=1.0,
+                frame_count=1,
+                source="srt",
+                raw_index=27,
+            ),
+            SubtitleSpan(
+                text="“Do you like my snowman?” says Nishal.",
+                normalized_text="do you like my snowman says nishal",
+                start_ms=109_233,
+                end_ms=112_800,
+                confidence=1.0,
+                frame_count=1,
+                source="srt",
+                raw_index=28,
+            ),
+            SubtitleSpan(
+                text="“It’s great!” they say.",
+                normalized_text="it's great they say",
+                start_ms=112_800,
+                end_ms=116_366,
+                confidence=1.0,
+                frame_count=1,
+                source="srt",
+                raw_index=29,
+            ),
+        ]
+
+        segments, _, _ = build_segments_from_subtitles(
+            sequence_no=5,
+            subtitle_spans=subtitle_spans,
+            utterances=utterances,
+            audio_duration_ms=116_366,
+            video_duration_ms=116_366,
+            segmentation_config=SegmentationConfig(),
+            subtitle_config=SubtitleConfig(),
+        )
+
+        self.assertEqual(len(segments), 4)
+        self.assertEqual(segments[0].source_word_range, [0, 8])
+        self.assertNotIn("targeted_subtitle_timing_repair", segments[0].quality_flags)
+        self.assertEqual(segments[1].start_ms, 106_634)
+        self.assertEqual(segments[1].end_ms, 109_232)
+        self.assertIn("targeted_subtitle_timing_repair", segments[1].quality_flags)
+        self.assertEqual(segments[2].start_ms, 109_234)
+        self.assertEqual(segments[2].end_ms, 112_799)
+        self.assertIn("targeted_subtitle_timing_repair", segments[2].quality_flags)
+        self.assertEqual(segments[3].start_ms, 112_800)
+        self.assertNotIn("targeted_subtitle_timing_repair", segments[3].quality_flags)
+
 
 if __name__ == "__main__":
     unittest.main()

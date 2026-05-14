@@ -77,8 +77,9 @@ The stabilizing changes are layered by responsibility instead of mixing concerns
 1. **Text authority** and **timing alignment** are separated. SRT mode no longer lets ASR rewrite content.
 2. **Candidate generation** is widened first, then **path selection** is solved globally. This prevents local boundary theft.
 3. **Timing repair** only activates on explicit risk signals such as low-confidence edges, suspicious word durations, failed alignment, or fragile short segments.
-4. **Boundary relaxation** only uses safe subtitle gaps, so stronger ASR matches keep their word-driven precision.
-5. **Quality flags stay visible** after repair, so risky segments remain auditable instead of silently "looking fixed".
+4. **Boundary quality now checks the matched ASR word window itself**, not the already-corrected SRT segment text. This prevents wrong ASR edge words such as `Whoa` / `Michelle` from passing as a "strong" boundary match.
+5. **Boundary relaxation** only uses safe subtitle gaps, so stronger ASR matches keep their word-driven precision.
+6. **Quality flags stay visible** after repair, so risky segments remain auditable instead of silently "looking fixed".
 
 Because of that separation, fixing one class of defect no longer requires weakening every segment globally.
 
@@ -89,9 +90,10 @@ Because of that separation, fixing one class of defect no longer requires weaken
 3. Added SRT selection bonuses for complete boundary-preserving matches.
 4. Expanded candidate search with asymmetric backtracking for short spans.
 5. Normalized token comparison with signature-based matching.
-6. Added targeted subtitle timing repair for high-risk segments.
-7. Added safe subtitle-boundary relaxation to prevent clipped edges.
-8. Refreshed exported quality flags after repair so diagnostics describe final timings instead of stale pre-repair state.
+6. Switched boundary-match checks to the actual matched ASR word window instead of the final SRT text.
+7. Added targeted subtitle timing repair for high-risk segments.
+8. Added safe subtitle-boundary relaxation to prevent clipped edges.
+9. Refreshed exported quality flags after repair so diagnostics describe final timings instead of stale pre-repair state.
 
 ## Final status by sample set
 

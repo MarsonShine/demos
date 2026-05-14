@@ -210,6 +210,7 @@ def export_review_page(
   <script id="segments-data" type="application/json">{segments_payload}</script>
   <script>
     const segments = JSON.parse(document.getElementById('segments-data').textContent);
+    const benignFlags = new Set(['subtitle_aligned']);
     const video = document.getElementById('video');
     const segmentList = document.getElementById('segmentList');
     const status = document.getElementById('status');
@@ -222,11 +223,18 @@ def export_review_page(
       return `${{segment.segment_no}} | ${{segment.start_timecode}} - ${{segment.end_timecode}}`;
     }}
 
+    function getAnomalyFlags(segment) {{
+      if (!Array.isArray(segment.quality_flags)) {{
+        return [];
+      }}
+      return segment.quality_flags.filter(flag => !benignFlags.has(flag));
+    }}
+
     function renderSegments() {{
       segmentList.innerHTML = '';
       segments.forEach((segment, index) => {{
-        const hasFlags = Array.isArray(segment.quality_flags) && segment.quality_flags.length > 0;
-        if (onlyAnomalies.checked && !hasFlags) {{
+        const anomalyFlags = getAnomalyFlags(segment);
+        if (onlyAnomalies.checked && anomalyFlags.length === 0) {{
           return;
         }}
         const item = document.createElement('div');
@@ -253,11 +261,13 @@ def export_review_page(
 
     function setActiveSegment(index) {{
       activeSegmentIndex = index;
-      [...segmentList.children].forEach((item, itemIndex) => {{
-        item.classList.toggle('active', itemIndex === index);
+      [...segmentList.children].forEach((item) => {{
+        item.classList.toggle('active', Number(item.dataset.index) === index);
       }});
       if (index >= 0) {{
-        segmentList.children[index]?.scrollIntoView({{ block: 'nearest' }});
+        [...segmentList.children]
+          .find(item => Number(item.dataset.index) === index)
+          ?.scrollIntoView({{ block: 'nearest' }});
       }}
     }}
 
