@@ -1,0 +1,49 @@
+{
+  "asr": {
+    "provider": "faster-whisper"
+  },
+  "azure_speech": {
+    "subscription_key": "",
+    "region": "",
+    "language": "en-US"
+  },
+  "faster_whisper": {
+    "model_size": "base.en",
+    "language": "en",
+    "device": "cpu",
+    "compute_type": "int8",
+    "cpu_threads": 4,
+    "num_workers": 1,
+    "beam_size": 5,
+    "vad_filter": false,
+    "download_root": ""
+  },
+  "subtitle": {
+    "sample_fps": 4.0,
+    "roi_left_ratio": 0.1,
+    "roi_right_ratio": 0.9,
+    "roi_top_ratio": 0.72,
+    "roi_bottom_ratio": 0.96,
+    "min_detection_confidence": 0.35,
+    "merge_similarity": 0.9,
+    "max_blank_gap_ms": 500,
+    "min_span_duration_ms": 250,
+    "visual_change_threshold": 12.0,
+    "representative_frame_window": 1,
+    "alignment_min_text_score": 72.0,
+    "alignment_search_window_ms": 2000,
+    "alignment_max_shift_ms": 1200,
+    "alignment_max_words_ahead": 80,
+    "allow_asr_fallback": true
+  },
+  "segmentation": {
+    "silence_threshold_db": -35.0,
+    "min_silence_duration_ms": 250,
+    "merge_gap_ms": 350,
+    "lead_in_ms": 80,
+    "tail_out_ms": 120,
+    "min_segment_duration_ms": 500,
+    "max_segment_duration_ms": 12000,
+    "max_boundary_shift_ms": 800
+  }
+}

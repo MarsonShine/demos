@@ -1,0 +1,194 @@
+Video Analysis Pipeline Usage
+=============================
+
+Overview
+--------
+
+This tool takes a source MP4 and optional SRT file, then generates:
+
+- 01.jpg                  cover image
+- 01.mp4                  muted video
+- 02.mp4                  copied source video
+- 03.mp3                  extracted audio
+- subtitle_spans.json     parsed SRT subtitle segments
+- segments.json           final aligned segments with quality flags
+- segments.csv            exported segment table
+- dubbing.result.xlsx     Excel workbook
+- review.html             static review page for click-to-seek playback
+
+
+1. Prerequisites
+----------------
+
+- Windows PowerShell
+- Python 3.12 available through `py`
+- FFmpeg and FFprobe installed and available in PATH
+- SRT file exported from your video workflow if you want subtitle-driven alignment
+
+The repository bootstrap script creates and uses `.video_pipeline_env` automatically when needed.
+Keep that folder local only and do not commit it because it is machine-specific and can be regenerated.
+
+
+2. ASR Modes
+------------
+
+2.1 Local ASR: faster-whisper
+
+Default provider:
+
+    faster-whisper
+
+Recommended when:
+
+- you want local/offline processing
+- you do not want to pay per request
+- you can accept occasional timing edge cases that are later caught by quality flags
+
+Relevant config in `pipeline_config.json`:
+
+    "asr": {
+      "provider": "faster-whisper"
+    }
+
+    "faster_whisper": {
+      "model_size": "base.en",
+      "language": "en",
+      "device": "cpu",
+      "compute_type": "int8"
+    }
+
+You can also override from the command line:
+
+    --asr-provider faster-whisper
+
+
+2.2 Third-party ASR: Azure Speech
+
+Supported commercial ASR provider:
+
+    azure-speech
+
+Recommended when:
+
+- you want more stable word timings and confidence
+- you want fewer boundary mistakes on short words, trailing sounds, or repeated sentence patterns
+
+Configure in `pipeline_config.json`:
+
+    "asr": {
+      "provider": "azure-speech"
+    }
+
+    "azure_speech": {
+      "subscription_key": "YOUR_AZURE_SPEECH_KEY",
+      "region": "YOUR_AZURE_SPEECH_REGION",
+      "language": "en-US"
+    }
+
+Or set environment variables:
+
+    $env:AZURE_SPEECH_KEY = "your-key"
+    $env:AZURE_SPEECH_REGION = "your-region"
+    $env:ASR_PROVIDER = "azure-speech"
+
+You can also override from the command line:
+
+    --asr-provider azure-speech
+
+
+3. Single-file Workflow
+-----------------------
+
+3.1 Explicit SRT input
+
+Always wrap Windows paths containing spaces or apostrophes in double quotes:
+
+    py run_pipeline.py single `
+      --source-mp4 "C:\video-analysis\input\job-001\02.mp4" `
+      --source-srt "C:\video-analysis\input\job-001\episode 01's intro.srt" `
+      --output-dir "C:\video-analysis\output\job-001_review"
+
+3.2 Auto-discover sidecar SRT
+
+If the SRT lives beside the MP4 and has the same stem, you can omit `--source-srt`:
+
+    py run_pipeline.py single `
+      --source-mp4 "C:\video-analysis\input\job-001\02.mp4" `
+      --output-dir "C:\video-analysis\output\job-001_review"
+
+
+4. Batch Workflow
+-----------------
+
+When each child folder contains `02.mp4` and a matching SRT:
+
+    py run_pipeline.py batch `
+      --input-root "C:\video-analysis\input" `
+      --output-root "C:\video-analysis\output_batch"
+
+If every child folder uses a fixed SRT filename, pass `--srt-name`:
+
+    py run_pipeline.py batch `
+      --input-root "C:\video-analysis\input" `
+      --output-root "C:\video-analysis\output_batch" `
+      --srt-name "episode 01's intro.srt"
+
+
+5. How Alignment Works
+----------------------
+
+- SRT provides the segment text and rough subtitle timing.
+- ASR provides full-audio word timings.
+- The tool performs monotonic forced alignment from each SRT segment to an ASR word window.
+- If the video has spoken title content before the first SRT subtitle, the tool prepends one ASR-derived title segment automatically.
+- Leading SRT boilerplate such as `AI 生成` is removed automatically before alignment.
+
+
+6. Review Page
+--------------
+
+Each output folder contains:
+
+    review.html
+
+Open it in a browser from the output folder.
+
+Capabilities:
+
+- click any segment to jump and play from that time
+- replay the current segment
+- enable "只看异常段" to show only segments with quality flags
+
+Typical abnormal flags:
+
+- alignment_risk
+- edge_word_low_confidence
+- word_duration_outlier
+- neighbor_boundary_drift
+- targeted_subtitle_timing_repair
+
+
+7. Important Notes
+------------------
+
+- If `dubbing.result.xlsx` is open in Excel, the tool cannot overwrite it.
+- If a PowerShell command uses paths with spaces or apostrophes, always quote them.
+- Normal segments remain unchanged. Only flagged risky segments may receive targeted subtitle-timing repair.
+- `segments.json` keeps detailed quality flags and source metadata for later review.
+
+
+8. Recommended Production Strategy
+----------------------------------
+
+Best quality:
+
+1. Export a clean SRT from your editing workflow
+2. Use Azure Speech as the main ASR provider
+3. Review `review.html`
+4. Focus only on segments with quality flags
+
+Low-cost local workflow:
+
+1. Export a clean SRT
+2. Use faster-whisper locally
+3. Review only flagged segments
