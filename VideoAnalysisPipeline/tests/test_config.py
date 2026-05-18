@@ -48,6 +48,9 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(config.subtitle.sample_fps, 4.0)
             self.assertEqual(config.audio.method, "demucs")
             self.assertEqual(config.audio.demucs_model, "htdemucs")
+            self.assertTrue(config.audio.cache_enabled)
+            self.assertEqual(config.azure_openai.deployment, "gpt-5.4-mini")
+            self.assertEqual(config.overview.education_stage, "小学")
 
     def test_environment_can_override_provider(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -72,6 +75,34 @@ class ConfigTests(unittest.TestCase):
                 config = load_config(config_path)
 
             self.assertEqual(config.asr.provider, "fast-whisper")
+
+    def test_environment_can_override_azure_openai_settings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "pipeline_config.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "azure_speech": {"subscription_key": "", "region": ""},
+                        "faster_whisper": {"model_size": "base.en"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with patch.dict(
+                os.environ,
+                {
+                    "AZURE_OPENAI_ENDPOINT": "https://example.openai.azure.com",
+                    "AZURE_OPENAI_API_KEY": "test-key",
+                    "AZURE_OPENAI_DEPLOYMENT": "gpt-5.4-mini",
+                },
+                clear=False,
+            ):
+                config = load_config(config_path)
+
+            self.assertEqual(config.azure_openai.endpoint, "https://example.openai.azure.com")
+            self.assertEqual(config.azure_openai.api_key, "test-key")
+            self.assertEqual(config.azure_openai.deployment, "gpt-5.4-mini")
 
 
 if __name__ == "__main__":

@@ -41,7 +41,22 @@
     "demucs_model": "htdemucs",
     "demucs_device": "cpu",
     "mp3_bitrate_kbps": 192,
-    "jobs": 0
+    "jobs": 0,
+    "cache_enabled": true,
+    "cache_dir": ".video_pipeline_cache\\bgm"
+  },
+  "azure_openai": {
+    "endpoint": "",
+    "api_key": "",
+    "deployment": "gpt-5.4-mini"
+  },
+  "overview": {
+    "education_stage": "小学",
+    "subject": "[167070462398963715]英语",
+    "difficulty": "",
+    "dialogue_audio": "",
+    "topic": "",
+    "source": "[7]绘本配音"
   },
   "segmentation": {
     "silence_threshold_db": -35.0,

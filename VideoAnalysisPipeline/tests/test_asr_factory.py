@@ -6,8 +6,10 @@ from video_analysis_pipeline.asr import create_transcriber, normalize_asr_provid
 from video_analysis_pipeline.config import (
     AudioConfig,
     AsrConfig,
+    AzureOpenAIConfig,
     AzureSpeechConfig,
     FasterWhisperConfig,
+    OverviewConfig,
     PipelineConfig,
     SegmentationConfig,
     SubtitleConfig,
@@ -27,6 +29,8 @@ class AsrFactoryTests(unittest.TestCase):
             faster_whisper=FasterWhisperConfig(),
             subtitle=SubtitleConfig(),
             audio=AudioConfig(),
+            azure_openai=AzureOpenAIConfig(endpoint="https://example.openai.azure.com", api_key="key"),
+            overview=OverviewConfig(),
             segmentation=SegmentationConfig(),
         )
 

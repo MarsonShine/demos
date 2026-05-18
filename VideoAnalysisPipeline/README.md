@@ -1,60 +1,63 @@
 # VideoAnalysisPipeline
 
-Initial .NET CLI scaffold for replacing the manual video dubbing segment workflow.
+Python pipeline for dubbing-prep asset generation.
 
-## What is implemented
+## Current capabilities
 
-1. Input a full mp4 file.
-2. Probe media metadata with `ffprobe`.
-3. Extract a normalized mono wav track with `ffmpeg`.
-4. Detect silence windows with `ffmpeg silencedetect`.
-5. Export analysis results to:
-   - `analysis.json`
+1. Generate per-video output assets from MP4 + optional SRT:
+   - `01.jpg` cover
+   - `01.mp4` muted video
+   - `02.mp4` full video copy
+   - `03.mp3` BGM-only audio
+   - `subtitle_spans.json`
+   - `segments.json`
    - `segments.csv`
-6. Support transcript enrichment through:
-   - imported transcript JSON
-   - OpenAI-compatible transcription when explicitly configured
+   - `review.html`
+   - `progress.json`
+2. Align subtitle spans with ASR timings and export editable review data.
+3. Generate workbook outputs with:
+   - sheet 1: overview rows
+   - sheet 2: segment rows
+4. Use Azure OpenAI Chat Completions once per video to create a concise Chinese overview.
+5. Cache Demucs BGM outputs under `.video_pipeline_cache\bgm` to avoid repeated separation work.
+6. Write `batch_progress.json` and `batch_summary.json` during batch runs.
 
-## Current output model
+## Execution modes
 
-Each exported segment contains:
-
-- `segment_id`
-- `audio_start_seconds`
-- `audio_end_seconds`
-- `video_start_seconds`
-- `video_end_seconds`
-- `transcript`
-- `confidence`
-- `review_status`
-- `source`
-
-## Usage
+The default commands keep the full automated pipeline:
 
 ```powershell
-dotnet run --project src\VideoAnalysis.Cli -- analyze --input C:\path\input.mp4
+py run_pipeline.py single --source-mp4 <mp4> --output-dir <output>
+py run_pipeline.py batch --input-root <input> --output-root <output>
 ```
 
-Use an imported transcript:
+You can now split the workflow when you do **not** want to rerun everything:
 
 ```powershell
-dotnet run --project src\VideoAnalysis.Cli -- analyze `
-  --input C:\path\input.mp4 `
-  --transcript-json C:\path\segments.json
+py run_pipeline.py single-segments --source-mp4 <mp4> --output-dir <output>
+py run_pipeline.py batch-segments --input-root <input> --output-root <output>
+py run_pipeline.py single-overview --output-dir <existing-output>
+py run_pipeline.py batch-overview --output-root <existing-output-root>
 ```
 
-Use OpenAI-compatible transcription:
+- `single-segments` / `batch-segments`: only generate segmentation assets and review resources.
+- `single-overview` / `batch-overview`: rebuild the overview workbook from existing outputs without rerunning segmentation, ASR, or BGM extraction.
+- `batch-overview` also accepts `--input-root` for command-line compatibility with the normal `batch` form, but it only reads existing outputs from `--output-root`.
+
+## Azure OpenAI overview
+
+- Provider: Azure OpenAI Chat Completions
+- Default deployment: `gpt-5.4-mini`
+- Call pattern: once per video, using the full subtitle corpus
+
+Set these environment variables at runtime when overview generation is needed:
 
 ```powershell
-dotnet run --project src\VideoAnalysis.Cli -- analyze `
-  --input C:\path\input.mp4 `
-  --openai-api-key <key> `
-  --openai-base-url https://api.openai.com/v1 `
-  --openai-model whisper-1
+$env:AZURE_OPENAI_ENDPOINT = "https://<resource>.openai.azure.com"
+$env:AZURE_OPENAI_API_KEY = "<key>"
+$env:AZURE_OPENAI_DEPLOYMENT = "gpt-5.4-mini"
 ```
 
-## Notes
+## Documentation
 
-- Local processing is the default for probing, extraction, and silence detection.
-- If cloud ASR is explicitly configured, the CLI prefers cloud transcription.
-- When no transcript provider is configured, the tool still exports silence-derived segments and marks them as `MissingTranscript`.
+See `USAGE.txt` for the full command reference and configuration details.

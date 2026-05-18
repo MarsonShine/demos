@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from openpyxl import load_workbook
+
+from video_analysis_pipeline.config import load_config
 from video_analysis_pipeline.config import SegmentationConfig
 from video_analysis_pipeline.models import Segment, SubtitleSpan, TranscriptUtterance, WordTiming
 from video_analysis_pipeline.pipeline import (
@@ -13,6 +17,7 @@ from video_analysis_pipeline.pipeline import (
     _normalize_segment_order,
     discover_batch_inputs,
     process_batch,
+    process_single_overview,
 )
 
 
@@ -70,6 +75,8 @@ class PipelineTests(unittest.TestCase):
                 template_path: Path | None = None,
                 workbook_output: Path | None = None,
                 transcriber: object | None = None,
+                progress_callback: object | None = None,
+                generate_overview: bool = True,
             ) -> ProcessedItem:
                 assert source_srt is not None
                 calls.append((source_mp4, source_srt, output_dir, sequence_no))
@@ -101,6 +108,142 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(calls[0][1], source_srt)
             self.assertEqual(calls[0][2], output_root / "season1" / "episode2")
             self.assertEqual(calls[0][3], 1)
+
+    def test_process_batch_can_skip_overview_generation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            input_root = Path(tmp_dir) / "input"
+            output_root = Path(tmp_dir) / "output"
+            job_dir = input_root / "lesson-01"
+            job_dir.mkdir(parents=True)
+            (job_dir / "clip.mp4").write_bytes(b"fake")
+            (job_dir / "clip.srt").write_text("", encoding="utf-8")
+            received_generate_overview: list[bool] = []
+
+            def fake_process_single_video(
+                source_mp4: Path,
+                output_dir: Path,
+                sequence_no: int,
+                config: object,
+                source_srt: Path | None = None,
+                template_path: Path | None = None,
+                workbook_output: Path | None = None,
+                transcriber: object | None = None,
+                progress_callback: object | None = None,
+                generate_overview: bool = True,
+            ) -> ProcessedItem:
+                received_generate_overview.append(generate_overview)
+                return ProcessedItem(
+                    sequence_no=sequence_no,
+                    source_mp4=source_mp4,
+                    output_dir=output_dir,
+                    workbook_path=None,
+                    review_page_path=None,
+                    segments=[],
+                    overview_row=None,
+                )
+
+            with patch("video_analysis_pipeline.pipeline.process_single_video", side_effect=fake_process_single_video), patch(
+                "video_analysis_pipeline.pipeline.export_workbook"
+            ) as export_workbook_mock:
+                process_batch(
+                    input_root=input_root,
+                    output_root=output_root,
+                    source_name=None,
+                    srt_name=None,
+                    config=object(),
+                    template_path=None,
+                    workbook_output=output_root / "dubbing.result.xlsx",
+                    generate_overview=False,
+                )
+
+            self.assertEqual(received_generate_overview, [False])
+            export_workbook_mock.assert_not_called()
+
+    def test_process_single_overview_rebuilds_workbook_from_existing_outputs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir) / "07 The Lion And The Mouse"
+            output_dir.mkdir(parents=True)
+            source_mp4 = output_dir / "02.mp4"
+            source_mp4.write_bytes(b"fake")
+            (output_dir / "01.mp4").write_bytes(b"fake")
+            (output_dir / "03.mp3").write_bytes(b"fake")
+            (output_dir / "01.jpg").write_bytes(b"fake")
+
+            segments = [
+                Segment(
+                    sequence_no=7,
+                    segment_no=1,
+                    text="The lion roars loudly.",
+                    start_ms=1_000,
+                    end_ms=2_000,
+                    text_source="srt",
+                    source_subtitle_index=0,
+                )
+            ]
+            subtitle_spans = [
+                SubtitleSpan(
+                    text="The lion roars loudly.",
+                    normalized_text="the lion roars loudly",
+                    start_ms=1_000,
+                    end_ms=2_000,
+                    confidence=1.0,
+                    frame_count=1,
+                    source="srt",
+                    raw_index=1,
+                )
+            ]
+
+            (output_dir / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "sequence_no": 7,
+                        "source_mp4": str(source_mp4),
+                        "muted_video": str(output_dir / "01.mp4"),
+                        "audio_mp3": str(output_dir / "03.mp3"),
+                        "cover_image": str(output_dir / "01.jpg"),
+                        "outputs": {
+                            "review_html": str(output_dir / "review.html"),
+                        },
+                        "timings_seconds": {"build-segments": 1.25},
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            (output_dir / "segments.json").write_text(
+                json.dumps(
+                    {
+                        "sequence_no": 7,
+                        "subtitle": {"spans": [item.to_json() for item in subtitle_spans]},
+                        "segments": [item.to_json() for item in segments],
+                        "overview": None,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+
+            config = load_config(Path(__file__).resolve().parents[1] / "pipeline_config.json")
+            with patch("video_analysis_pipeline.pipeline.generate_video_summary", return_value="狮子和老鼠学会互相帮助。"):
+                result = process_single_overview(output_dir=output_dir, config=config)
+
+            self.assertEqual(result.sequence_no, 7)
+            self.assertIsNotNone(result.workbook_path)
+            workbook = load_workbook(result.workbook_path)
+            self.assertEqual(workbook.worksheets[0].cell(row=2, column=4).value, "The Lion And The Mouse")
+            self.assertEqual(workbook.worksheets[0].cell(row=2, column=10).value, "狮子和老鼠学会互相帮助。")
+            self.assertEqual(workbook.worksheets[1].cell(row=2, column=3).value, "The lion roars loudly.")
+
+            manifest_payload = json.loads((output_dir / "manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest_payload["overview"]["video_title"], "The Lion And The Mouse")
+            self.assertEqual(manifest_payload["overview"]["video_description"], "狮子和老鼠学会互相帮助。")
+            self.assertIn("build-segments", manifest_payload["timings_seconds"])
+            self.assertIn("generate-video-summary", manifest_payload["timings_seconds"])
+
+            segments_payload = json.loads((output_dir / "segments.json").read_text(encoding="utf-8"))
+            self.assertEqual(segments_payload["overview"]["movie_name"], "The Lion And The Mouse")
 
     def test_normalize_segment_order_sorts_by_time_and_renumbers(self) -> None:
         segments = [

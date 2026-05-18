@@ -8,7 +8,12 @@ from pathlib import Path
 from unittest.mock import patch
 
 from video_analysis_pipeline.config import AudioConfig
-from video_analysis_pipeline.media import _decode_subprocess_output, detect_silence, extract_background_audio_mp3
+from video_analysis_pipeline.media import (
+    _decode_subprocess_output,
+    _resolve_bgm_cache_path,
+    detect_silence,
+    extract_background_audio_mp3,
+)
 
 
 class MediaTests(unittest.TestCase):
@@ -66,8 +71,30 @@ class MediaTests(unittest.TestCase):
 
             result = extract_background_audio_mp3(source_audio, output_audio, AudioConfig())
 
-            self.assertEqual(result, output_audio)
+            self.assertEqual(result.path, output_audio)
+            self.assertFalse(result.from_cache)
             self.assertEqual(output_audio.read_bytes(), b"bgm-bytes")
+
+    @patch("video_analysis_pipeline.media.subprocess.run")
+    def test_extract_background_audio_mp3_reuses_cache(self, mock_run: object) -> None:
+        mock_run.side_effect = AssertionError("demucs should not run when cache is warm")
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            cache_dir = Path(tmp_dir) / "cache"
+            source_audio = Path(tmp_dir) / "analysis.mp3"
+            output_audio = Path(tmp_dir) / "03.mp3"
+            source_audio.write_bytes(b"input")
+            config = AudioConfig(cache_dir=str(cache_dir))
+
+            cache_key_material = "source-key"
+            cached_result_path = _resolve_bgm_cache_path(config, cache_key_material)
+            cached_result_path.parent.mkdir(parents=True, exist_ok=True)
+            cached_result_path.write_bytes(b"cached-bgm")
+
+            result = extract_background_audio_mp3(source_audio, output_audio, config, cache_key_material=cache_key_material)
+
+            self.assertTrue(result.from_cache)
+            self.assertEqual(output_audio.read_bytes(), b"cached-bgm")
 
     @patch("video_analysis_pipeline.media.subprocess.run")
     def test_extract_background_audio_mp3_keeps_temp_dir_when_output_is_missing(self, mock_run: object) -> None:

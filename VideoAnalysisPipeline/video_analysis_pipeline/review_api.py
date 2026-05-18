@@ -15,7 +15,7 @@ from video_analysis_pipeline.exporter import (
     segments_to_rows,
     write_json,
 )
-from video_analysis_pipeline.models import Segment
+from video_analysis_pipeline.models import OverviewRow, Segment
 from video_analysis_pipeline.timecode import format_timestamp
 
 
@@ -110,6 +110,28 @@ def _load_segments_from_output_dir(output_dir: Path) -> list[Segment]:
     return [_segment_from_json(item) for item in segments_payload.get("segments", [])]
 
 
+def _overview_row_from_manifest(manifest: dict[str, Any]) -> OverviewRow | None:
+    payload = manifest.get("overview")
+    if not isinstance(payload, dict):
+        return None
+    return OverviewRow(
+        education_stage=str(payload.get("education_stage", "")),
+        subject=str(payload.get("subject", "")),
+        sequence_no=int(payload.get("sequence_no", manifest.get("sequence_no", 1))),
+        movie_name=str(payload.get("movie_name", "")),
+        video_title=str(payload.get("video_title", "")),
+        muted_video=str(payload.get("muted_video", "")),
+        full_video=str(payload.get("full_video", "")),
+        background_audio=str(payload.get("background_audio", "")),
+        cover_image=str(payload.get("cover_image", "")),
+        video_description=str(payload.get("video_description", "")),
+        difficulty=str(payload.get("difficulty", "")),
+        dialogue_audio=str(payload.get("dialogue_audio", "")),
+        topic=str(payload.get("topic", "")),
+        source=str(payload.get("source", "")),
+    )
+
+
 def apply_review_adjustments(review_page_path: Path, adjustments: list[dict[str, Any]]) -> dict[str, Any]:
     review_page_path = review_page_path.resolve()
     output_dir = review_page_path.parent
@@ -186,7 +208,13 @@ def apply_review_adjustments(review_page_path: Path, adjustments: list[dict[str,
     write_json(manifest_path, manifest)
 
     export_csv(segments_csv_path, segment_rows)
-    export_workbook(workbook_output_path, segment_rows, template_path=None)
+    overview_row = _overview_row_from_manifest(manifest)
+    export_workbook(
+        workbook_output_path,
+        segment_rows,
+        overview_rows=[overview_row] if overview_row is not None else None,
+        template_path=None,
+    )
 
     sequence_no = int(segments_payload.get("sequence_no") or manifest.get("sequence_no") or 1)
     video_name = Path(str(manifest.get("source_mp4") or "02.mp4")).name
@@ -210,11 +238,16 @@ def apply_review_adjustments(review_page_path: Path, adjustments: list[dict[str,
         write_json(batch_summary_path, batch_summary_payload)
 
         merged_rows: list[tuple[int, int, str, str, str]] = []
+        overview_rows: list[OverviewRow] = []
         for item in batch_summary_payload.get("items", []):
             item_output_dir = Path(item["output_dir"]).resolve()
             merged_rows.extend(segments_to_rows(_load_segments_from_output_dir(item_output_dir)))
+            item_manifest = _read_json(item_output_dir / "manifest.json")
+            item_overview_row = _overview_row_from_manifest(item_manifest)
+            if item_overview_row is not None:
+                overview_rows.append(item_overview_row)
         batch_workbook_path = batch_root / "dubbing.result.xlsx"
-        export_workbook(batch_workbook_path, merged_rows, template_path=None)
+        export_workbook(batch_workbook_path, merged_rows, overview_rows=overview_rows, template_path=None)
 
     updated_files = [
         str(manifest_path),

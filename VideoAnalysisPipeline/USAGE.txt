@@ -13,8 +13,9 @@ This tool takes a source MP4 and optional SRT file, then generates:
 - subtitle_spans.json     parsed SRT subtitle segments
 - segments.json           final aligned segments with quality flags
 - segments.csv            exported segment table
-- dubbing.result.xlsx     Excel workbook
+- dubbing.result.xlsx     Excel workbook (sheet 1 overview + sheet 2 segments)
 - review.html             static review page for click-to-seek playback
+- progress.json           per-item progress and module timings
 
 
 1. Prerequisites
@@ -65,11 +66,14 @@ Background-music output config:
       "method": "demucs",
       "demucs_model": "htdemucs",
       "demucs_device": "cpu",
-      "mp3_bitrate_kbps": 192
+      "mp3_bitrate_kbps": 192,
+      "cache_enabled": true,
+      "cache_dir": ".video_pipeline_cache\\bgm"
     }
 
 The pipeline still extracts a temporary full-mix analysis track for ASR and silence detection.
 The persisted `03.mp3` file is now the accompaniment/BGM track.
+When the same source video is reprocessed with the same audio settings, the pipeline reuses the cached BGM stem instead of rerunning Demucs.
 
 You can also override from the command line:
 
@@ -110,6 +114,33 @@ You can also override from the command line:
     --asr-provider azure-speech
 
 
+2.3 Video summaries: Azure OpenAI
+
+Configure in `pipeline_config.json`:
+
+    "azure_openai": {
+      "endpoint": "https://<resource>.openai.azure.com",
+      "api_key": "YOUR_AZURE_OPENAI_KEY",
+      "deployment": "gpt-5.4-mini",
+      "api_version": "2024-10-21"
+    }
+
+    "overview": {
+      "education_stage": "小学",
+      "subject": "[167070462398963715]英语",
+      "source": "[7]绘本配音"
+    }
+
+Or set environment variables:
+
+    $env:AZURE_OPENAI_ENDPOINT = "https://<resource>.openai.azure.com"
+    $env:AZURE_OPENAI_API_KEY = "your-key"
+    $env:AZURE_OPENAI_DEPLOYMENT = "gpt-5.4-mini"
+
+The pipeline calls Azure OpenAI once per video, using the full subtitle corpus to generate one concise Chinese overview.
+It does not call the model per segment.
+
+
 3. Single-file Workflow
 -----------------------
 
@@ -129,6 +160,27 @@ If the SRT lives beside the MP4 and has the same stem, you can omit `--source-sr
     py run_pipeline.py single `
       --source-mp4 "C:\video-analysis\input\job-001\02.mp4" `
       --output-dir "C:\video-analysis\output\job-001_review"
+
+3.3 Segment-only mode
+
+If you only want the segment resources and do not want to call Azure OpenAI or rebuild the workbook yet:
+
+    py run_pipeline.py single-segments `
+      --source-mp4 "C:\video-analysis\input\job-001\02.mp4" `
+      --source-srt "C:\video-analysis\input\job-001\02.srt" `
+      --output-dir "C:\video-analysis\output\job-001_review"
+
+This writes the media assets, `subtitle_spans.json`, `segments.json`, `segments.csv`, `review.html`, and `progress.json`.
+It skips the overview summary and `dubbing.result.xlsx`.
+
+3.4 Overview-only rebuild
+
+If the output folder already exists and you only want to regenerate the overview workbook without rerunning segmentation, ASR, or BGM extraction:
+
+    py run_pipeline.py single-overview `
+      --output-dir "C:\video-analysis\output\job-001_review"
+
+This reads the existing `manifest.json` and `segments.json`, calls Azure OpenAI once for that video, and rebuilds `dubbing.result.xlsx`.
 
 
 4. Batch Workflow
@@ -167,6 +219,7 @@ Output tree:
     │  ├─ 01.mp4
     │  ├─ 02.mp4
     │  ├─ 03.mp3
+    │  ├─ progress.json
     │  ├─ review.html
     │  └─ ...
     └─ unit-03
@@ -175,6 +228,7 @@ Output tree:
           ├─ 01.mp4
           ├─ 02.mp4
           ├─ 03.mp3
+          ├─ progress.json
           ├─ review.html
           └─ ...
 
@@ -182,6 +236,26 @@ Optional filters:
 
 - `--source-name 02.mp4` only processes folders whose single MP4 has that filename
 - `--srt-name 02.srt` only processes folders whose single SRT has that filename
+
+4.1 Batch segment-only mode
+
+To generate only the segment resources for every discovered folder:
+
+    py run_pipeline.py batch-segments `
+      --input-root "C:\video-analysis\input" `
+      --output-root "C:\video-analysis\output_batch"
+
+This skips Azure OpenAI and the merged workbook export.
+
+4.2 Batch overview-only rebuild
+
+To rebuild overview workbooks from existing generated outputs without rerunning the full pipeline:
+
+    py run_pipeline.py batch-overview `
+      --output-root "C:\video-analysis\output_batch"
+
+This refreshes each child folder's `dubbing.result.xlsx`, then rebuilds the merged workbook under the batch root.
+For command compatibility with normal batch mode, `batch-overview` also accepts `--input-root`, but the overview rebuild only reads existing generated outputs from `--output-root`.
 
 
 5. How Alignment Works
@@ -226,6 +300,8 @@ Typical abnormal flags:
 - Normal segments remain unchanged. Only flagged risky segments may receive targeted subtitle-timing repair.
 - `segments.json` keeps detailed quality flags and source metadata for later review.
 - In batch mode, a folder with missing or multiple MP4/SRT files fails fast instead of guessing.
+- `progress.json` and `batch_progress.json` record the current stage and per-module timings while the pipeline runs.
+- Workbook sheet 1 is generated automatically from the produced assets, fixed overview metadata, and the Azure OpenAI summary.
 
 
 8. Recommended Production Strategy

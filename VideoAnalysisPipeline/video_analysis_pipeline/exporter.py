@@ -8,10 +8,11 @@ from typing import Iterable
 
 from openpyxl import Workbook, load_workbook
 
-from video_analysis_pipeline.models import Segment
+from video_analysis_pipeline.models import OverviewRow, Segment
 
 
-HEADERS = ["序号", "分视频序号", "分视频文本", "起始时间", "结束时间"]
+OVERVIEW_HEADERS = ["学段", "科目", "序号", "电影名称", "视频标题", "静音视频", "完整视频", "背景音频", "视频封图", "视频简介", "难易程度", "人机对话音频", "话题", "来源"]
+SEGMENT_HEADERS = ["序号", "分视频序号", "分视频文本", "起始时间", "结束时间"]
 
 
 def write_json(path: Path, payload: object) -> Path:
@@ -29,7 +30,7 @@ def export_csv(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8-sig", newline="") as handle:
         writer = csv.writer(handle)
-        writer.writerow(HEADERS)
+        writer.writerow(SEGMENT_HEADERS)
         writer.writerows(rows)
     return output_path
 
@@ -37,6 +38,7 @@ def export_csv(
 def export_workbook(
     output_path: Path,
     rows: Iterable[tuple[int, int, str, str, str]],
+    overview_rows: Iterable[OverviewRow] | None = None,
     template_path: Path | None = None,
 ) -> Path:
     if template_path and template_path.exists():
@@ -47,12 +49,40 @@ def export_workbook(
     while len(workbook.worksheets) < 2:
         workbook.create_sheet()
 
-    worksheet = workbook.worksheets[1]
+    overview_worksheet = workbook.worksheets[0]
+    segment_worksheet = workbook.worksheets[1]
 
+    _write_sheet(
+        worksheet=overview_worksheet,
+        headers=OVERVIEW_HEADERS,
+        rows=[row.to_excel_row() for row in overview_rows] if overview_rows is not None else [],
+    )
+    _write_sheet(
+        worksheet=segment_worksheet,
+        headers=SEGMENT_HEADERS,
+        rows=list(rows),
+    )
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        workbook.save(output_path)
+    except PermissionError as exc:
+        raise PermissionError(
+            f"Cannot write workbook because the file is in use: {output_path}. "
+            "Please close it in Excel or choose a different --workbook-output path."
+        ) from exc
+    return output_path
+
+
+def _write_sheet(
+    worksheet: object,
+    headers: list[str],
+    rows: list[tuple[object, ...]],
+) -> None:
     if worksheet.max_row > 1:
         worksheet.delete_rows(2, worksheet.max_row - 1)
 
-    for column_index, header in enumerate(HEADERS, start=1):
+    for column_index, header in enumerate(headers, start=1):
         if worksheet.cell(row=1, column=column_index).value in (None, ""):
             worksheet.cell(row=1, column=column_index, value=header)
 
@@ -61,10 +91,6 @@ def export_workbook(
         for column_index, value in enumerate(row, start=1):
             worksheet.cell(row=row_index, column=column_index, value=value)
         row_index += 1
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    workbook.save(output_path)
-    return output_path
 
 
 def segments_to_rows(segments: list[Segment]) -> list[tuple[int, int, str, str, str]]:

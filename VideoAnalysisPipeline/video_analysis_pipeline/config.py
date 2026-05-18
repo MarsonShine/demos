@@ -126,6 +126,8 @@ class AudioConfig:
     demucs_device: str = "cpu"
     mp3_bitrate_kbps: int = 192
     jobs: int = 0
+    cache_enabled: bool = True
+    cache_dir: str = ".video_pipeline_cache\\bgm"
 
     def validate(self) -> None:
         if self.method != "demucs":
@@ -138,6 +140,51 @@ class AudioConfig:
             raise ValueError("audio mp3_bitrate_kbps must be at least 32.")
         if self.jobs < 0:
             raise ValueError("audio jobs must be >= 0.")
+        if not self.cache_dir:
+            raise ValueError("audio cache_dir must not be empty.")
+
+
+@dataclass(slots=True)
+class AzureOpenAIConfig:
+    endpoint: str = ""
+    api_key: str = ""
+    deployment: str = "gpt-5.4-mini"
+    api_version: str = "2024-10-21"
+    temperature: float = 0.2
+    max_output_tokens: int = 120
+    max_input_chars: int = 12_000
+
+    def validate(self) -> None:
+        if not self.endpoint or self.endpoint.startswith(PLACEHOLDER_PREFIX):
+            raise ValueError(
+                "Azure OpenAI endpoint is not configured. "
+                "Please edit pipeline_config.json or set AZURE_OPENAI_ENDPOINT."
+            )
+        if not self.api_key or self.api_key.startswith(PLACEHOLDER_PREFIX):
+            raise ValueError(
+                "Azure OpenAI api_key is not configured. "
+                "Please edit pipeline_config.json or set AZURE_OPENAI_API_KEY."
+            )
+        if not self.deployment:
+            raise ValueError("Azure OpenAI deployment must not be empty.")
+        if not self.api_version:
+            raise ValueError("Azure OpenAI api_version must not be empty.")
+        if not 0 <= self.temperature <= 2:
+            raise ValueError("Azure OpenAI temperature must be between 0 and 2.")
+        if self.max_output_tokens < 1:
+            raise ValueError("Azure OpenAI max_output_tokens must be greater than 0.")
+        if self.max_input_chars < 100:
+            raise ValueError("Azure OpenAI max_input_chars must be at least 100.")
+
+
+@dataclass(slots=True)
+class OverviewConfig:
+    education_stage: str = "小学"
+    subject: str = "[167070462398963715]英语"
+    difficulty: str = ""
+    dialogue_audio: str = ""
+    topic: str = ""
+    source: str = "[7]绘本配音"
 
 
 @dataclass(slots=True)
@@ -159,6 +206,8 @@ class PipelineConfig:
     faster_whisper: FasterWhisperConfig
     subtitle: SubtitleConfig
     audio: AudioConfig
+    azure_openai: AzureOpenAIConfig
+    overview: OverviewConfig
     segmentation: SegmentationConfig
 
 
@@ -176,6 +225,8 @@ def load_config(path: Path) -> PipelineConfig:
     faster_whisper_data = dict(data.get("faster_whisper", {}))
     subtitle_data = dict(data.get("subtitle", {}))
     audio_data = dict(data.get("audio", {}))
+    azure_openai_data = dict(data.get("azure_openai", {}))
+    overview_data = dict(data.get("overview", {}))
     segmentation_data = dict(data.get("segmentation", {}))
 
     env_provider = os.getenv("ASR_PROVIDER")
@@ -189,6 +240,12 @@ def load_config(path: Path) -> PipelineConfig:
     env_fw_download_root = os.getenv("FASTER_WHISPER_DOWNLOAD_ROOT")
     env_audio_demucs_model = os.getenv("AUDIO_DEMUCS_MODEL")
     env_audio_demucs_device = os.getenv("AUDIO_DEMUCS_DEVICE")
+    env_audio_cache_dir = os.getenv("AUDIO_CACHE_DIR")
+    env_audio_cache_enabled = os.getenv("AUDIO_CACHE_ENABLED")
+    env_aoai_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+    env_aoai_api_key = os.getenv("AZURE_OPENAI_API_KEY")
+    env_aoai_deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT")
+    env_aoai_api_version = os.getenv("AZURE_OPENAI_API_VERSION")
 
     if env_provider:
         asr_data["provider"] = env_provider
@@ -212,6 +269,18 @@ def load_config(path: Path) -> PipelineConfig:
         audio_data["demucs_model"] = env_audio_demucs_model
     if env_audio_demucs_device:
         audio_data["demucs_device"] = env_audio_demucs_device
+    if env_audio_cache_dir:
+        audio_data["cache_dir"] = env_audio_cache_dir
+    if env_audio_cache_enabled:
+        audio_data["cache_enabled"] = env_audio_cache_enabled.lower() in {"1", "true", "yes", "on"}
+    if env_aoai_endpoint:
+        azure_openai_data["endpoint"] = env_aoai_endpoint
+    if env_aoai_api_key:
+        azure_openai_data["api_key"] = env_aoai_api_key
+    if env_aoai_deployment:
+        azure_openai_data["deployment"] = env_aoai_deployment
+    if env_aoai_api_version:
+        azure_openai_data["api_version"] = env_aoai_api_version
 
     asr_config = AsrConfig(
         provider=str(asr_data.get("provider", "faster-whisper")),
@@ -260,6 +329,27 @@ def load_config(path: Path) -> PipelineConfig:
         demucs_device=str(audio_data.get("demucs_device", "cpu")),
         mp3_bitrate_kbps=int(audio_data.get("mp3_bitrate_kbps", 192)),
         jobs=int(audio_data.get("jobs", 0)),
+        cache_enabled=bool(audio_data.get("cache_enabled", True)),
+        cache_dir=str(audio_data.get("cache_dir", ".video_pipeline_cache\\bgm")),
+    )
+
+    azure_openai_config = AzureOpenAIConfig(
+        endpoint=str(azure_openai_data.get("endpoint", "")),
+        api_key=str(azure_openai_data.get("api_key", "")),
+        deployment=str(azure_openai_data.get("deployment", "gpt-5.4-mini")),
+        api_version=str(azure_openai_data.get("api_version", "2024-10-21")),
+        temperature=float(azure_openai_data.get("temperature", 0.2)),
+        max_output_tokens=int(azure_openai_data.get("max_output_tokens", 120)),
+        max_input_chars=int(azure_openai_data.get("max_input_chars", 12_000)),
+    )
+
+    overview_config = OverviewConfig(
+        education_stage=str(overview_data.get("education_stage", "小学")),
+        subject=str(overview_data.get("subject", "[167070462398963715]英语")),
+        difficulty=str(overview_data.get("difficulty", "")),
+        dialogue_audio=str(overview_data.get("dialogue_audio", "")),
+        topic=str(overview_data.get("topic", "")),
+        source=str(overview_data.get("source", "[7]绘本配音")),
     )
 
     segmentation_config = SegmentationConfig(
@@ -279,5 +369,7 @@ def load_config(path: Path) -> PipelineConfig:
         faster_whisper=faster_whisper_config,
         subtitle=subtitle_config,
         audio=audio_config,
+        azure_openai=azure_openai_config,
+        overview=overview_config,
         segmentation=segmentation_config,
     )

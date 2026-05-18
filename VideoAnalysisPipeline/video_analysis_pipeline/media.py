@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import locale
 import os
@@ -8,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 
 from video_analysis_pipeline.config import AudioConfig
@@ -19,6 +21,13 @@ SILENCE_START_PATTERN = re.compile(r"silence_start:\s*(?P<seconds>\d+(?:\.\d+)?)
 SILENCE_END_PATTERN = re.compile(
     r"silence_end:\s*(?P<seconds>\d+(?:\.\d+)?)\s*\|\s*silence_duration:\s*(?P<duration>\d+(?:\.\d+)?)"
 )
+
+
+@dataclass(slots=True)
+class BackgroundAudioResult:
+    path: Path
+    from_cache: bool
+    cache_path: Path | None = None
 
 
 def _decode_subprocess_output(output: bytes | str | None) -> str:
@@ -147,9 +156,19 @@ def extract_audio_mp3(source_path: Path, output_path: Path) -> Path:
     return output_path
 
 
-def extract_background_audio_mp3(source_path: Path, output_path: Path, config: AudioConfig) -> Path:
+def extract_background_audio_mp3(
+    source_path: Path,
+    output_path: Path,
+    config: AudioConfig,
+    cache_key_material: str | None = None,
+) -> BackgroundAudioResult:
     config.validate()
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    effective_cache_key = cache_key_material or _default_audio_cache_key_material(source_path)
+    cache_path = _resolve_bgm_cache_path(config, effective_cache_key)
+    if config.cache_enabled and cache_path.exists():
+        shutil.copy2(cache_path, output_path)
+        return BackgroundAudioResult(path=output_path, from_cache=True, cache_path=cache_path)
     temp_dir = Path(tempfile.mkdtemp(prefix="video-analysis-demucs-"))
     should_cleanup_temp_dir = False
     try:
@@ -200,11 +219,36 @@ def extract_background_audio_mp3(source_path: Path, output_path: Path, config: A
             )
 
         shutil.copy2(candidates[0], output_path)
+        if config.cache_enabled:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(candidates[0], cache_path)
         should_cleanup_temp_dir = True
-        return output_path
+        return BackgroundAudioResult(
+            path=output_path,
+            from_cache=False,
+            cache_path=cache_path if config.cache_enabled else None,
+        )
     finally:
         if should_cleanup_temp_dir:
             shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def _resolve_bgm_cache_path(config: AudioConfig, cache_key_material: str) -> Path:
+    cache_key = hashlib.sha256(
+        (
+            f"{cache_key_material}|{config.method}|{config.demucs_model}|{config.demucs_device}|"
+            f"{config.mp3_bitrate_kbps}|{config.jobs}"
+        ).encode("utf-8")
+    ).hexdigest()
+    cache_root = Path(config.cache_dir)
+    if not cache_root.is_absolute():
+        cache_root = Path.cwd() / cache_root
+    return cache_root.resolve() / cache_key / "03.mp3"
+
+
+def _default_audio_cache_key_material(source_path: Path) -> str:
+    stats = source_path.stat()
+    return f"{source_path.resolve()}|{stats.st_size}|{stats.st_mtime_ns}"
 
 
 def _find_demucs_background_candidates(

@@ -4,11 +4,42 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from video_analysis_pipeline.exporter import export_review_page
-from video_analysis_pipeline.models import Segment
+from openpyxl import load_workbook
+
+from video_analysis_pipeline.exporter import export_review_page, export_workbook
+from video_analysis_pipeline.models import OverviewRow, Segment
 
 
 class ExporterTests(unittest.TestCase):
+    def test_export_workbook_populates_overview_and_segment_sheets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_path = Path(tmp_dir) / "dubbing.result.xlsx"
+            export_workbook(
+                output_path=output_path,
+                rows=[(1, 1, "Dan finds a big box.", "00:00:05.333", "00:00:09.166")],
+                overview_rows=[
+                    OverviewRow(
+                        education_stage="小学",
+                        subject="[167070462398963715]英语",
+                        sequence_no=1,
+                        movie_name="Dan's Box",
+                        video_title="Dan's Box",
+                        muted_video="01.mp4",
+                        full_video="02.mp4",
+                        background_audio="03.mp3",
+                        cover_image="01.jpg",
+                        video_description="丹打开神秘盒子，蹦出一个调皮的杰克玩偶!",
+                        source="[7]绘本配音",
+                    )
+                ],
+            )
+
+            workbook = load_workbook(output_path)
+            self.assertEqual(workbook.worksheets[0].cell(row=1, column=1).value, "学段")
+            self.assertEqual(workbook.worksheets[0].cell(row=2, column=4).value, "Dan's Box")
+            self.assertEqual(workbook.worksheets[1].cell(row=1, column=1).value, "序号")
+            self.assertEqual(workbook.worksheets[1].cell(row=2, column=3).value, "Dan finds a big box.")
+
     def test_exports_review_page_with_video_and_segments(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             output_path = Path(tmp_dir) / "review.html"

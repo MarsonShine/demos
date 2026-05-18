@@ -131,6 +131,21 @@ class SubtitleSpan:
             "quality_flags": self.quality_flags,
         }
 
+    @classmethod
+    def from_json(cls, payload: dict[str, Any]) -> "SubtitleSpan":
+        return cls(
+            text=str(payload["text"]),
+            normalized_text=str(payload.get("normalized_text", "")),
+            start_ms=int(payload["start_ms"]),
+            end_ms=int(payload["end_ms"]),
+            confidence=float(payload.get("confidence", 0.0)),
+            frame_count=int(payload.get("frame_count", 0)),
+            source=str(payload.get("source", "ocr")),
+            raw_index=int(payload["raw_index"]) if payload.get("raw_index") is not None else None,
+            source_texts=[str(item) for item in payload.get("source_texts", [])],
+            quality_flags=[str(item) for item in payload.get("quality_flags", [])],
+        )
+
 
 @dataclass(slots=True)
 class Segment:
@@ -180,6 +195,115 @@ class Segment:
             "source_word_range": self.source_word_range,
             "source_utterance_indexes": self.source_utterance_indexes,
             "quality_flags": self.quality_flags,
+        }
+
+    @classmethod
+    def from_json(cls, payload: dict[str, Any]) -> "Segment":
+        return cls(
+            sequence_no=int(payload["sequence_no"]),
+            segment_no=int(payload["segment_no"]),
+            text=str(payload["text"]),
+            start_ms=int(payload["start_ms"]),
+            end_ms=int(payload["end_ms"]),
+            source_utterance_indexes=[int(item) for item in payload.get("source_utterance_indexes", [])],
+            confidence=payload.get("confidence"),
+            text_source=str(payload.get("text_source", "asr")),
+            alignment_confidence=payload.get("alignment_confidence"),
+            ocr_confidence=payload.get("ocr_confidence", payload.get("subtitle_confidence")),
+            source_subtitle_index=payload.get("source_subtitle_index"),
+            source_word_range=[int(item) for item in payload["source_word_range"]] if payload.get("source_word_range") else None,
+            quality_flags=[str(item) for item in payload.get("quality_flags", [])],
+        )
+
+
+@dataclass(slots=True)
+class OverviewRow:
+    education_stage: str
+    subject: str
+    sequence_no: int
+    movie_name: str
+    video_title: str
+    muted_video: str
+    full_video: str
+    background_audio: str
+    cover_image: str
+    video_description: str
+    difficulty: str = ""
+    dialogue_audio: str = ""
+    topic: str = ""
+    source: str = ""
+
+    def to_excel_row(self) -> tuple[object, ...]:
+        return (
+            self.education_stage,
+            self.subject,
+            self.sequence_no,
+            self.movie_name,
+            self.video_title,
+            self.muted_video,
+            self.full_video,
+            self.background_audio,
+            self.cover_image,
+            self.video_description,
+            self.difficulty,
+            self.dialogue_audio,
+            self.topic,
+            self.source,
+        )
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "education_stage": self.education_stage,
+            "subject": self.subject,
+            "sequence_no": self.sequence_no,
+            "movie_name": self.movie_name,
+            "video_title": self.video_title,
+            "muted_video": self.muted_video,
+            "full_video": self.full_video,
+            "background_audio": self.background_audio,
+            "cover_image": self.cover_image,
+            "video_description": self.video_description,
+            "difficulty": self.difficulty,
+            "dialogue_audio": self.dialogue_audio,
+            "topic": self.topic,
+            "source": self.source,
+        }
+
+    @classmethod
+    def from_json(cls, payload: dict[str, Any]) -> "OverviewRow":
+        return cls(
+            education_stage=str(payload.get("education_stage", "")),
+            subject=str(payload.get("subject", "")),
+            sequence_no=int(payload.get("sequence_no", 1)),
+            movie_name=str(payload.get("movie_name", "")),
+            video_title=str(payload.get("video_title", "")),
+            muted_video=str(payload.get("muted_video", "")),
+            full_video=str(payload.get("full_video", "")),
+            background_audio=str(payload.get("background_audio", "")),
+            cover_image=str(payload.get("cover_image", "")),
+            video_description=str(payload.get("video_description", "")),
+            difficulty=str(payload.get("difficulty", "")),
+            dialogue_audio=str(payload.get("dialogue_audio", "")),
+            topic=str(payload.get("topic", "")),
+            source=str(payload.get("source", "")),
+        )
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "education_stage": self.education_stage,
+            "subject": self.subject,
+            "sequence_no": self.sequence_no,
+            "movie_name": self.movie_name,
+            "video_title": self.video_title,
+            "muted_video": self.muted_video,
+            "full_video": self.full_video,
+            "background_audio": self.background_audio,
+            "cover_image": self.cover_image,
+            "video_description": self.video_description,
+            "difficulty": self.difficulty,
+            "dialogue_audio": self.dialogue_audio,
+            "topic": self.topic,
+            "source": self.source,
         }
 
 

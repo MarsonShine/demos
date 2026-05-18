@@ -79,6 +79,22 @@ class ReviewApiTests(unittest.TestCase):
                     {
                         "sequence_no": 7,
                         "source_mp4": str(source_mp4),
+                        "overview": {
+                            "education_stage": "小学",
+                            "subject": "[167070462398963715]英语",
+                            "sequence_no": 7,
+                            "movie_name": "Review Story",
+                            "video_title": "Review Story",
+                            "muted_video": "01.mp4",
+                            "full_video": "02.mp4",
+                            "background_audio": "03.mp3",
+                            "cover_image": "01.jpg",
+                            "video_description": "测试简介",
+                            "difficulty": "",
+                            "dialogue_audio": "",
+                            "topic": "",
+                            "source": "[7]绘本配音",
+                        },
                         "outputs": {
                             "segments_csv": str(segments_csv_path),
                             "review_html": str(review_path),
@@ -166,10 +182,12 @@ class ReviewApiTests(unittest.TestCase):
             self.assertIn("00:00:20.800", csv_text)
 
             item_workbook = load_workbook(workbook_path)
+            self.assertEqual(item_workbook.worksheets[0].cell(row=2, column=4).value, "Review Story")
             self.assertEqual(item_workbook.worksheets[1].cell(row=2, column=4).value, "00:00:18.500")
             self.assertEqual(item_workbook.worksheets[1].cell(row=2, column=5).value, "00:00:20.800")
 
             merged_workbook = load_workbook(batch_workbook_path)
+            self.assertEqual(merged_workbook.worksheets[0].cell(row=2, column=4).value, "Review Story")
             self.assertEqual(merged_workbook.worksheets[1].cell(row=2, column=4).value, "00:00:18.500")
             self.assertEqual(merged_workbook.worksheets[1].cell(row=2, column=5).value, "00:00:20.800")
 

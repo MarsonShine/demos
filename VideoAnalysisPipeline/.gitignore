@@ -1,7 +1,9 @@
 .video_pipeline_env/
+.video_pipeline_cache/
 __pycache__/
 .pytest_cache/
 *.py[cod]
 output/
 dubbing/
+files/
 .venv/
