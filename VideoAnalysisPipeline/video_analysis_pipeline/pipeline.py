@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from statistics import fmean
+import tempfile
 from typing import Protocol
 
 from video_analysis_pipeline.asr import create_transcriber, normalize_asr_provider
@@ -18,6 +19,7 @@ from video_analysis_pipeline.media import (
     copy_source_video,
     detect_silence,
     extract_audio_mp3,
+    extract_background_audio_mp3,
     extract_cover,
     extract_muted_video,
     probe_media,
@@ -72,21 +74,24 @@ def process_single_video(
     source_asset = copy_source_video(source_mp4, output_dir / "02.mp4")
     cover_path = extract_cover(source_asset, output_dir / "01.jpg")
     muted_video_path = extract_muted_video(source_asset, output_dir / "01.mp4")
-    audio_path = extract_audio_mp3(source_asset, output_dir / "03.mp3")
+    with tempfile.TemporaryDirectory(prefix="video-analysis-audio-") as temp_dir:
+        analysis_audio_path = extract_audio_mp3(source_asset, Path(temp_dir) / "analysis.mp3")
+        audio_path = extract_background_audio_mp3(analysis_audio_path, output_dir / "03.mp3", config.audio)
+        analysis_audio_metadata = probe_media(analysis_audio_path)
+        audio_metadata = probe_media(audio_path)
+        silence_ranges, non_silent_ranges = detect_silence(
+            audio_path=analysis_audio_path,
+            total_duration_ms=analysis_audio_metadata.duration_ms,
+            silence_threshold_db=config.segmentation.silence_threshold_db,
+            min_silence_duration_ms=config.segmentation.min_silence_duration_ms,
+        )
+        utterances = active_transcriber.transcribe(analysis_audio_path)
 
     source_metadata = probe_media(source_asset)
     muted_metadata = probe_media(muted_video_path)
-    audio_metadata = probe_media(audio_path)
-    silence_ranges, non_silent_ranges = detect_silence(
-        audio_path=audio_path,
-        total_duration_ms=audio_metadata.duration_ms,
-        silence_threshold_db=config.segmentation.silence_threshold_db,
-        min_silence_duration_ms=config.segmentation.min_silence_duration_ms,
-    )
 
     resolved_srt_path = discover_srt_path(source_mp4=source_mp4, source_srt=source_srt)
     subtitle_spans = parse_srt_file(resolved_srt_path) if resolved_srt_path is not None else []
-    utterances = active_transcriber.transcribe(audio_path)
     subtitle_spans_path = output_dir / "subtitle_spans.json"
 
     alignment_summary = {
@@ -103,7 +108,7 @@ def process_single_video(
             sequence_no=sequence_no,
             subtitle_spans=subtitle_spans,
             utterances=utterances,
-            audio_duration_ms=audio_metadata.duration_ms,
+            audio_duration_ms=analysis_audio_metadata.duration_ms,
             video_duration_ms=source_metadata.duration_ms,
             segmentation_config=config.segmentation,
             subtitle_config=config.subtitle,
@@ -113,7 +118,7 @@ def process_single_video(
             sequence_no=sequence_no,
             subtitle_spans=subtitle_spans,
             utterances=utterances,
-            audio_duration_ms=audio_metadata.duration_ms,
+            audio_duration_ms=analysis_audio_metadata.duration_ms,
             video_duration_ms=source_metadata.duration_ms,
             config=config.segmentation,
             aligned_segments=segments,
@@ -127,7 +132,7 @@ def process_single_video(
                 sequence_no=sequence_no,
                 utterances=utterances,
                 non_silent_ranges=non_silent_ranges,
-                audio_duration_ms=audio_metadata.duration_ms,
+                audio_duration_ms=analysis_audio_metadata.duration_ms,
                 video_duration_ms=source_metadata.duration_ms,
                 config=config.segmentation,
             )
@@ -139,11 +144,13 @@ def process_single_video(
             sequence_no=sequence_no,
             utterances=utterances,
             non_silent_ranges=non_silent_ranges,
-            audio_duration_ms=audio_metadata.duration_ms,
+            audio_duration_ms=analysis_audio_metadata.duration_ms,
             video_duration_ms=source_metadata.duration_ms,
             config=config.segmentation,
         )
         alignment_summary["alignment_mode"] = "asr-only-fallback"
+
+    _normalize_segment_order(segments)
 
     manifest_path = output_dir / "manifest.json"
     segments_path = output_dir / "segments.json"
@@ -168,6 +175,13 @@ def process_single_video(
             "cover_image": str(cover_path),
             "muted_video": str(muted_video_path),
             "audio_mp3": str(audio_path),
+            "audio_processing": {
+                "analysis_audio_kind": "temporary-full-mix",
+                "output_audio_kind": "bgm",
+                "separation_method": config.audio.method,
+                "separation_model": config.audio.demucs_model,
+                "separation_device": config.audio.demucs_device,
+            },
             "asr": {
                 "provider": asr_provider,
             },
@@ -188,6 +202,10 @@ def process_single_video(
             "media": {
                 "source": source_metadata.to_json(),
                 "muted_video": muted_metadata.to_json(),
+                "analysis_audio": {
+                    **analysis_audio_metadata.to_json(),
+                    "path": None,
+                },
                 "audio": audio_metadata.to_json(),
             },
         },
@@ -198,6 +216,13 @@ def process_single_video(
             "sequence_no": sequence_no,
             "source_mp4": str(source_asset),
             "audio_mp3": str(audio_path),
+            "audio_processing": {
+                "analysis_audio_kind": "temporary-full-mix",
+                "output_audio_kind": "bgm",
+                "separation_method": config.audio.method,
+                "separation_model": config.audio.demucs_model,
+                "separation_device": config.audio.demucs_device,
+            },
             "asr": {
                 "provider": asr_provider,
             },
@@ -342,6 +367,17 @@ def _join_intro_words(words: list) -> str:
 def _renumber_segments(segments: list[Segment]) -> None:
     for index, segment in enumerate(segments, start=1):
         segment.segment_no = index
+
+
+def _segment_sort_key(segment: Segment) -> tuple[int, int, int, int]:
+    subtitle_index = segment.source_subtitle_index if segment.source_subtitle_index is not None else 1_000_000
+    title_priority = 0 if segment.text_source == "asr-title" else 1
+    return (segment.start_ms, segment.end_ms, title_priority, subtitle_index)
+
+
+def _normalize_segment_order(segments: list[Segment]) -> None:
+    segments.sort(key=_segment_sort_key)
+    _renumber_segments(segments)
 
 
 def _scale_audio_to_video(milliseconds: int, audio_duration_ms: int, video_duration_ms: int) -> int:

@@ -9,7 +9,7 @@ This tool takes a source MP4 and optional SRT file, then generates:
 - 01.jpg                  cover image
 - 01.mp4                  muted video
 - 02.mp4                  copied source video
-- 03.mp3                  extracted audio
+- 03.mp3                  background-music-only audio (vocals removed)
 - subtitle_spans.json     parsed SRT subtitle segments
 - segments.json           final aligned segments with quality flags
 - segments.csv            exported segment table
@@ -58,6 +58,18 @@ Relevant config in `pipeline_config.json`:
       "device": "cpu",
       "compute_type": "int8"
     }
+
+Background-music output config:
+
+    "audio": {
+      "method": "demucs",
+      "demucs_model": "htdemucs",
+      "demucs_device": "cpu",
+      "mp3_bitrate_kbps": 192
+    }
+
+The pipeline still extracts a temporary full-mix analysis track for ASR and silence detection.
+The persisted `03.mp3` file is now the accompaniment/BGM track.
 
 You can also override from the command line:
 

@@ -50,7 +50,10 @@ class ExporterTests(unittest.TestCase):
             self.assertNotIn("exportAdjustmentsButton", html)
             self.assertIn("postAdjustmentsToApi", html)
             self.assertIn("/api/review/save", html)
-            self.assertIn("review-server --output-root output", html)
+            self.assertIn("let isSavingAdjustments = false;", html)
+            self.assertIn("replayButton.disabled = segmentButtonsDisabled;", html)
+            self.assertIn("saveAdjustmentsButton.disabled = isSavingAdjustments || collectAdjustments().length === 0;", html)
+            self.assertIn("py run_pipeline.py review-server --output-root output", html)
 
     def test_review_page_only_anomalies_filter_ignores_benign_flags(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -93,6 +96,7 @@ class ExporterTests(unittest.TestCase):
             self.assertIn("localStorage.removeItem(storageKey);", html)
             self.assertIn("commitSavedAdjustments()", html)
             self.assertIn("const defaultApiBase = 'http://127.0.0.1:8765';", html)
+            self.assertIn("当前筛选条件隐藏了选中的分段。", html)
 
 
 if __name__ == "__main__":

@@ -683,6 +683,69 @@ class SubtitleAlignmentTests(unittest.TestCase):
         self.assertEqual(segments[3].start_ms, 112_800)
         self.assertNotIn("targeted_subtitle_timing_repair", segments[3].quality_flags)
 
+    def test_relaxed_srt_boundaries_do_not_leave_adjacent_segments_overlapping(self) -> None:
+        utterances = [
+            TranscriptUtterance(
+                text="I’m afloat in a boat",
+                start_ms=10_700,
+                end_ms=13_800,
+                words=[
+                    WordTiming(text="I’m", start_ms=10_700, end_ms=11_300, confidence=0.98),
+                    WordTiming(text="afloat", start_ms=11_300, end_ms=12_200, confidence=0.98),
+                    WordTiming(text="in", start_ms=12_200, end_ms=12_500, confidence=0.98),
+                    WordTiming(text="a", start_ms=12_500, end_ms=12_700, confidence=0.98),
+                    WordTiming(text="boat", start_ms=12_700, end_ms=13_800, confidence=0.98),
+                ],
+            ),
+            TranscriptUtterance(
+                text="on the wide wide sea",
+                start_ms=13_569,
+                end_ms=17_300,
+                words=[
+                    WordTiming(text="on", start_ms=13_569, end_ms=13_900, confidence=0.98),
+                    WordTiming(text="the", start_ms=13_900, end_ms=14_200, confidence=0.98),
+                    WordTiming(text="wide", start_ms=14_200, end_ms=15_100, confidence=0.98),
+                    WordTiming(text="wide", start_ms=15_100, end_ms=16_100, confidence=0.98),
+                    WordTiming(text="sea", start_ms=16_100, end_ms=17_300, confidence=0.98),
+                ],
+            ),
+        ]
+        subtitle_spans = [
+            SubtitleSpan(
+                text="I’m afloat in a boat",
+                normalized_text="i’m afloat in a boat",
+                start_ms=10_700,
+                end_ms=13_800,
+                confidence=1.0,
+                frame_count=1,
+                source="srt",
+                raw_index=1,
+            ),
+            SubtitleSpan(
+                text="on the wide, wide sea.",
+                normalized_text="on the wide wide sea",
+                start_ms=14_200,
+                end_ms=17_300,
+                confidence=1.0,
+                frame_count=1,
+                source="srt",
+                raw_index=2,
+            ),
+        ]
+
+        segments, _, _ = build_segments_from_subtitles(
+            sequence_no=1,
+            subtitle_spans=subtitle_spans,
+            utterances=utterances,
+            audio_duration_ms=17_300,
+            video_duration_ms=17_300,
+            segmentation_config=SegmentationConfig(),
+            subtitle_config=SubtitleConfig(),
+        )
+
+        self.assertEqual(len(segments), 2)
+        self.assertLess(segments[0].end_ms, segments[1].start_ms)
+
 
 if __name__ == "__main__":
     unittest.main()

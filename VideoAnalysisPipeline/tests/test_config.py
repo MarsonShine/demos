@@ -46,6 +46,8 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(config.faster_whisper.model_size, "base.en")
             self.assertEqual(config.faster_whisper.cpu_threads, 2)
             self.assertEqual(config.subtitle.sample_fps, 4.0)
+            self.assertEqual(config.audio.method, "demucs")
+            self.assertEqual(config.audio.demucs_model, "htdemucs")
 
     def test_environment_can_override_provider(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

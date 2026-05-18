@@ -10,6 +10,7 @@ from video_analysis_pipeline.models import Segment, SubtitleSpan, TranscriptUtte
 from video_analysis_pipeline.pipeline import (
     ProcessedItem,
     _build_leading_title_segment,
+    _normalize_segment_order,
     discover_batch_inputs,
     process_batch,
 )
@@ -100,6 +101,16 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(calls[0][1], source_srt)
             self.assertEqual(calls[0][2], output_root / "season1" / "episode2")
             self.assertEqual(calls[0][3], 1)
+
+    def test_normalize_segment_order_sorts_by_time_and_renumbers(self) -> None:
+        segments = [
+            Segment(sequence_no=1, segment_no=1, text="Late", start_ms=5_000, end_ms=6_000, source_subtitle_index=1),
+            Segment(sequence_no=1, segment_no=2, text="Early", start_ms=1_000, end_ms=2_000, source_subtitle_index=0),
+        ]
+
+        _normalize_segment_order(segments)
+
+        self.assertEqual([(segment.segment_no, segment.text, segment.start_ms) for segment in segments], [(1, "Early", 1_000), (2, "Late", 5_000)])
 
     def test_builds_leading_title_segment_from_asr_before_first_srt(self) -> None:
         subtitle_spans = [

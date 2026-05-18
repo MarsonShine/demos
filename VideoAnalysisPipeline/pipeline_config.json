@@ -36,6 +36,13 @@
     "alignment_max_words_ahead": 80,
     "allow_asr_fallback": true
   },
+  "audio": {
+    "method": "demucs",
+    "demucs_model": "htdemucs",
+    "demucs_device": "cpu",
+    "mp3_bitrate_kbps": 192,
+    "jobs": 0
+  },
   "segmentation": {
     "silence_threshold_db": -35.0,
     "min_silence_duration_ms": 250,

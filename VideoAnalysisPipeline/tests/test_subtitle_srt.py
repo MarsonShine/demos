@@ -64,6 +64,58 @@ class SubtitleSrtTests(unittest.TestCase):
             self.assertEqual(spans[0].raw_index, 2)
             self.assertEqual(spans[0].text, "Dan finds a big box.")
 
+    def test_parse_srt_file_sorts_non_monotonic_blocks_by_time(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            srt_path = Path(tmp_dir) / "sample.srt"
+            srt_path.write_text(
+                "\n".join(
+                    [
+                        "1",
+                        "00:00:05,000 --> 00:00:06,000",
+                        "Late in file, late in time.",
+                        "",
+                        "2",
+                        "00:00:01,000 --> 00:00:02,000",
+                        "Earlier in time, later in file.",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            spans = parse_srt_file(srt_path)
+
+            self.assertEqual([span.start_ms for span in spans], [1000, 5000])
+            self.assertEqual([span.raw_index for span in spans], [2, 1])
+
+    def test_parse_srt_file_handles_missing_blank_line_between_blocks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            srt_path = Path(tmp_dir) / "sample.srt"
+            srt_path.write_text(
+                "\n".join(
+                    [
+                        "1",
+                        "00:00:00,000 --> 00:00:10,000",
+                        "Title line",
+                        "Author line",
+                        "2",
+                        "00:00:06,500 --> 00:00:08,000",
+                        "First spoken line.",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            spans = parse_srt_file(srt_path)
+
+            self.assertEqual(len(spans), 2)
+            self.assertEqual(spans[0].text, "Title line Author line")
+            self.assertEqual(spans[0].raw_index, 1)
+            self.assertEqual(spans[0].end_ms, 6499)
+            self.assertEqual(spans[1].text, "First spoken line.")
+            self.assertEqual(spans[1].raw_index, 2)
+
     def test_discovers_same_stem_srt(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             temp_path = Path(tmp_dir)

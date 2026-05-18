@@ -27,29 +27,16 @@ def parse_srt_file(srt_path: Path) -> list[SubtitleSpan]:
         raise FileNotFoundError(f"SRT file not found: {srt_path}")
 
     content = srt_path.read_text(encoding="utf-8-sig")
-    blocks = re.split(r"\r?\n\s*\r?\n", content.strip())
     spans: list[SubtitleSpan] = []
 
-    for block_number, raw_block in enumerate(blocks, start=1):
-        lines = [line.strip() for line in raw_block.splitlines() if line.strip()]
-        if len(lines) < 2:
-            continue
-
-        raw_index: int | None = None
-        if lines[0].isdigit():
-            raw_index = int(lines[0])
-            lines = lines[1:]
-
-        if not lines:
-            continue
-
-        time_match = _TIME_RANGE_PATTERN.match(lines[0])
+    for block_number, (raw_index, time_line, text_lines) in enumerate(_iter_srt_blocks(content), start=1):
+        time_match = _TIME_RANGE_PATTERN.match(time_line)
         if not time_match:
             continue
 
         start_ms = _parse_srt_timestamp(time_match.group(1))
         end_ms = _parse_srt_timestamp(time_match.group(2))
-        text = _clean_srt_text(lines[1:])
+        text = _clean_srt_text(text_lines)
         normalized_text = normalize_subtitle_text(text)
         if not normalized_text:
             continue
@@ -68,7 +55,51 @@ def parse_srt_file(srt_path: Path) -> list[SubtitleSpan]:
             )
         )
 
-    return _filter_leading_boilerplate_spans(spans)
+    normalized_spans = _sort_subtitle_spans_chronologically(spans)
+    normalized_spans = _normalize_leading_title_span(normalized_spans)
+    return _filter_leading_boilerplate_spans(normalized_spans)
+
+
+def _iter_srt_blocks(content: str) -> list[tuple[int | None, str, list[str]]]:
+    lines = content.splitlines()
+    blocks: list[tuple[int | None, str, list[str]]] = []
+    index = 0
+
+    while index < len(lines):
+        current_line = lines[index].strip()
+        if not current_line:
+            index += 1
+            continue
+
+        raw_index: int | None = None
+        time_line_index = index
+        if current_line.isdigit() and index + 1 < len(lines) and _TIME_RANGE_PATTERN.match(lines[index + 1].strip()):
+            raw_index = int(current_line)
+            time_line_index = index + 1
+            index += 2
+        elif _TIME_RANGE_PATTERN.match(current_line):
+            index += 1
+        else:
+            index += 1
+            continue
+
+        time_line = lines[time_line_index].strip()
+        text_lines: list[str] = []
+        while index < len(lines):
+            stripped_line = lines[index].strip()
+            if not stripped_line:
+                index += 1
+                break
+            if stripped_line.isdigit() and index + 1 < len(lines) and _TIME_RANGE_PATTERN.match(lines[index + 1].strip()):
+                break
+            if _TIME_RANGE_PATTERN.match(stripped_line):
+                break
+            text_lines.append(lines[index])
+            index += 1
+
+        blocks.append((raw_index, time_line, text_lines))
+
+    return blocks
 
 
 def discover_srt_path(
@@ -146,6 +177,32 @@ def _filter_leading_boilerplate_spans(spans: list[SubtitleSpan]) -> list[Subtitl
             break
         first_content_index += 1
     return spans[first_content_index:]
+
+
+def _sort_subtitle_spans_chronologically(spans: list[SubtitleSpan]) -> list[SubtitleSpan]:
+    return sorted(
+        spans,
+        key=lambda item: (
+            item.start_ms,
+            item.end_ms,
+            item.raw_index if item.raw_index is not None else 1_000_000,
+        ),
+    )
+
+
+def _normalize_leading_title_span(spans: list[SubtitleSpan]) -> list[SubtitleSpan]:
+    if len(spans) < 2:
+        return spans
+
+    first_span = spans[0]
+    second_span = spans[1]
+    if first_span.start_ms != 0:
+        return spans
+    if first_span.end_ms < second_span.start_ms:
+        return spans
+
+    first_span.end_ms = max(first_span.start_ms + 1, second_span.start_ms - 1)
+    return spans
 
 
 def _is_leading_boilerplate(span: SubtitleSpan) -> bool:

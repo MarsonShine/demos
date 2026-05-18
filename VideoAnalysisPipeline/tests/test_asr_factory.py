@@ -4,6 +4,7 @@ import unittest
 
 from video_analysis_pipeline.asr import create_transcriber, normalize_asr_provider
 from video_analysis_pipeline.config import (
+    AudioConfig,
     AsrConfig,
     AzureSpeechConfig,
     FasterWhisperConfig,
@@ -25,6 +26,7 @@ class AsrFactoryTests(unittest.TestCase):
             ),
             faster_whisper=FasterWhisperConfig(),
             subtitle=SubtitleConfig(),
+            audio=AudioConfig(),
             segmentation=SegmentationConfig(),
         )
 

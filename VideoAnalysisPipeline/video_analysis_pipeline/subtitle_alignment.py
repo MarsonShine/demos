@@ -183,6 +183,7 @@ def build_segments_from_subtitles(
     _apply_segment_quality_checks(segments, subtitle_spans, asr_words)
     _repair_flagged_segments(segments, subtitle_spans, asr_words)
     _relax_srt_segment_boundaries(segments, subtitle_spans)
+    _remove_segment_overlap(segments)
     _refresh_shift_flags(segments, subtitle_spans, subtitle_config)
     _clear_timing_quality_flags(segments)
     _apply_segment_quality_checks(segments, subtitle_spans, asr_words)

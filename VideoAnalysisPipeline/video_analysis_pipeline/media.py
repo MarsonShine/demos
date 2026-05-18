@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
+import locale
 import os
 import re
 import shutil
 import subprocess
+import sys
+import tempfile
 from pathlib import Path
 
+from video_analysis_pipeline.config import AudioConfig
 from video_analysis_pipeline.models import MediaMetadata, TimeRange
 from video_analysis_pipeline.timecode import seconds_to_milliseconds
 
@@ -17,13 +21,50 @@ SILENCE_END_PATTERN = re.compile(
 )
 
 
-def run_command(args: list[str]) -> subprocess.CompletedProcess[str]:
+def _decode_subprocess_output(output: bytes | str | None) -> str:
+    if output is None:
+        return ""
+    if isinstance(output, str):
+        return output
+
+    preferred_encoding = locale.getpreferredencoding(False)
+    candidate_encodings = ["utf-8"]
+    if preferred_encoding:
+        candidate_encodings.append(preferred_encoding)
+    if os.name == "nt":
+        candidate_encodings.extend(["mbcs", "cp1252"])
+
+    tried_encodings: set[str] = set()
+    for encoding in candidate_encodings:
+        normalized_encoding = encoding.lower()
+        if normalized_encoding in tried_encodings:
+            continue
+        tried_encodings.add(normalized_encoding)
+        try:
+            return output.decode(encoding)
+        except (LookupError, UnicodeDecodeError):
+            continue
+
+    fallback_encoding = preferred_encoding or "utf-8"
+    return output.decode(fallback_encoding, errors="replace")
+
+
+def _run_text_command(args: list[str]) -> subprocess.CompletedProcess[str]:
     completed = subprocess.run(
         args,
         capture_output=True,
-        text=True,
         check=False,
     )
+    return subprocess.CompletedProcess(
+        args=completed.args,
+        returncode=completed.returncode,
+        stdout=_decode_subprocess_output(completed.stdout),
+        stderr=_decode_subprocess_output(completed.stderr),
+    )
+
+
+def run_command(args: list[str]) -> subprocess.CompletedProcess[str]:
+    completed = _run_text_command(args)
     if completed.returncode != 0:
         raise RuntimeError(
             "Command failed.\n"
@@ -106,6 +147,89 @@ def extract_audio_mp3(source_path: Path, output_path: Path) -> Path:
     return output_path
 
 
+def extract_background_audio_mp3(source_path: Path, output_path: Path, config: AudioConfig) -> Path:
+    config.validate()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_dir = Path(tempfile.mkdtemp(prefix="video-analysis-demucs-"))
+    should_cleanup_temp_dir = False
+    try:
+        separation_root = temp_dir / "separated"
+        command = [
+            sys.executable,
+            "-m",
+            "demucs.separate",
+            "--two-stems=vocals",
+            "--mp3",
+            "--mp3-bitrate",
+            str(config.mp3_bitrate_kbps),
+            "--device",
+            config.demucs_device,
+            "-n",
+            config.demucs_model,
+            "-o",
+            str(separation_root),
+        ]
+        if config.jobs > 0:
+            command.extend(["-j", str(config.jobs)])
+        command.append(str(source_path))
+
+        completed = _run_text_command(command)
+        if completed.returncode != 0:
+            raise RuntimeError(
+                "Demucs background-audio separation failed.\n"
+                f"Command: {' '.join(command)}\n"
+                f"Temp directory kept for inspection: {temp_dir}\n"
+                f"Exit code: {completed.returncode}\n"
+                f"STDOUT:\n{completed.stdout}\n"
+                f"STDERR:\n{completed.stderr}"
+            )
+
+        candidates, expected_dir = _find_demucs_background_candidates(separation_root, config.demucs_model, source_path.stem)
+        if not candidates:
+            available_files = sorted(
+                str(path.relative_to(temp_dir))
+                for path in temp_dir.rglob("*")
+                if path.is_file()
+            )
+            raise RuntimeError(
+                "Demucs completed but no background stem was produced.\n"
+                "Expected one of: no_vocals.*, accompaniment.*\n"
+                f"Expected it under: {expected_dir}\n"
+                f"Temp directory kept for inspection: {temp_dir}\n"
+                f"Files found: {available_files}"
+            )
+
+        shutil.copy2(candidates[0], output_path)
+        should_cleanup_temp_dir = True
+        return output_path
+    finally:
+        if should_cleanup_temp_dir:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def _find_demucs_background_candidates(
+    separation_root: Path,
+    model_name: str,
+    track_stem: str,
+) -> tuple[list[Path], Path]:
+    expected_dir = separation_root / model_name / track_stem
+    valid_names = {
+        "no_vocals.mp3",
+        "no_vocals.wav",
+        "no_vocals.flac",
+        "accompaniment.mp3",
+        "accompaniment.wav",
+        "accompaniment.flac",
+    }
+
+    candidates = sorted(path for path in expected_dir.glob("*") if path.is_file() and path.name in valid_names)
+    if candidates:
+        return candidates, expected_dir
+
+    candidates = sorted(path for path in separation_root.rglob("*") if path.is_file() and path.name in valid_names)
+    return candidates, expected_dir
+
+
 def probe_media(path: Path) -> MediaMetadata:
     completed = run_command(
         [
@@ -146,7 +270,7 @@ def detect_silence(
     silence_threshold_db: float,
     min_silence_duration_ms: int,
 ) -> tuple[list[TimeRange], list[TimeRange]]:
-    completed = subprocess.run(
+    completed = _run_text_command(
         [
             "ffmpeg",
             "-hide_banner",
@@ -158,10 +282,7 @@ def detect_silence(
             "-f",
             "null",
             os.devnull,
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
+        ]
     )
 
     if completed.returncode != 0:

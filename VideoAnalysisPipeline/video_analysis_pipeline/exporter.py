@@ -322,6 +322,7 @@ def export_review_page(
     const saveStatus = document.getElementById('saveStatus');
     let activeSegmentIndex = -1;
     let playbackEndSeconds = null;
+    let isSavingAdjustments = false;
 
     function formatTimecode(milliseconds) {{
       const total = Math.max(0, Math.trunc(milliseconds));
@@ -470,6 +471,10 @@ def export_review_page(
       return defaultApiBase;
     }}
 
+    function hasRenderedSegment(index) {{
+      return [...segmentList.children].some(item => Number(item.dataset.index) === index);
+    }}
+
     function cacheAdjustments(payload) {{
       localStorage.setItem(storageKey, JSON.stringify(payload));
     }}
@@ -504,12 +509,18 @@ def export_review_page(
     }}
 
     async function saveAdjustments() {{
+      if (isSavingAdjustments) {{
+        return null;
+      }}
       const payload = buildAdjustmentsPayload();
       if (payload.adjustments.length === 0) {{
         saveStatus.textContent = '当前没有新的时间修正可保存。';
+        updateActionButtons();
         return null;
       }}
       cacheAdjustments(payload);
+      isSavingAdjustments = true;
+      updateActionButtons();
       saveStatus.textContent = '正在回写 segments.json / CSV / Excel ...';
       try {{
         const result = await postAdjustmentsToApi(payload);
@@ -519,8 +530,11 @@ def export_review_page(
         return result;
       }} catch (error) {{
         console.error(error);
-        saveStatus.textContent = `回写失败：${{error.message}}。请先运行 python -m video_analysis_pipeline review-server --output-root output`; 
+        saveStatus.textContent = `回写失败：${{error.message}}。请先运行 py run_pipeline.py review-server --output-root output`;
         return null;
+      }} finally {{
+        isSavingAdjustments = false;
+        updateActionButtons();
       }}
     }}
 
@@ -554,22 +568,25 @@ def export_review_page(
     }}
 
     function updateActionButtons() {{
-      const disabled = activeSegmentIndex < 0;
-      moveStartBackwardButton.disabled = disabled;
-      moveStartForwardButton.disabled = disabled;
-      moveEndBackwardButton.disabled = disabled;
-      moveEndForwardButton.disabled = disabled;
-      resetSegmentButton.disabled = disabled;
+      const hasActiveSegment = activeSegmentIndex >= 0 && Boolean(segments[activeSegmentIndex]) && hasRenderedSegment(activeSegmentIndex);
+      const segmentButtonsDisabled = !hasActiveSegment || isSavingAdjustments;
+      replayButton.disabled = segmentButtonsDisabled;
+      moveStartBackwardButton.disabled = segmentButtonsDisabled;
+      moveStartForwardButton.disabled = segmentButtonsDisabled;
+      moveEndBackwardButton.disabled = segmentButtonsDisabled;
+      moveEndForwardButton.disabled = segmentButtonsDisabled;
+      resetSegmentButton.disabled = segmentButtonsDisabled;
+      saveAdjustmentsButton.disabled = isSavingAdjustments || collectAdjustments().length === 0;
     }}
 
     function setActiveSegment(index) {{
-      activeSegmentIndex = index;
+      activeSegmentIndex = index >= 0 && hasRenderedSegment(index) ? index : -1;
       [...segmentList.children].forEach((item) => {{
-        item.classList.toggle('active', Number(item.dataset.index) === index);
+        item.classList.toggle('active', Number(item.dataset.index) === activeSegmentIndex);
       }});
-      if (index >= 0) {{
+      if (activeSegmentIndex >= 0) {{
         [...segmentList.children]
-          .find(item => Number(item.dataset.index) === index)
+          .find(item => Number(item.dataset.index) === activeSegmentIndex)
           ?.scrollIntoView({{ block: 'nearest' }});
       }}
       updateEditorSummary();
@@ -601,6 +618,12 @@ def export_review_page(
         item.addEventListener('click', () => playSegment(index));
         segmentList.appendChild(item);
       }});
+      if (activeSegmentIndex >= 0 && !hasRenderedSegment(activeSegmentIndex)) {{
+        activeSegmentIndex = -1;
+        if (onlyAnomalies.checked) {{
+          status.textContent = '当前筛选条件隐藏了选中的分段。';
+        }}
+      }}
       setActiveSegment(activeSegmentIndex);
     }}
 

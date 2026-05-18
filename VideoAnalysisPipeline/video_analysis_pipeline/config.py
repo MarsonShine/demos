@@ -120,6 +120,27 @@ class SubtitleConfig:
 
 
 @dataclass(slots=True)
+class AudioConfig:
+    method: str = "demucs"
+    demucs_model: str = "htdemucs"
+    demucs_device: str = "cpu"
+    mp3_bitrate_kbps: int = 192
+    jobs: int = 0
+
+    def validate(self) -> None:
+        if self.method != "demucs":
+            raise ValueError("audio method must be demucs.")
+        if not self.demucs_model:
+            raise ValueError("audio demucs_model must not be empty.")
+        if not self.demucs_device:
+            raise ValueError("audio demucs_device must not be empty.")
+        if self.mp3_bitrate_kbps < 32:
+            raise ValueError("audio mp3_bitrate_kbps must be at least 32.")
+        if self.jobs < 0:
+            raise ValueError("audio jobs must be >= 0.")
+
+
+@dataclass(slots=True)
 class SegmentationConfig:
     silence_threshold_db: float = -35.0
     min_silence_duration_ms: int = 250
@@ -137,6 +158,7 @@ class PipelineConfig:
     azure_speech: AzureSpeechConfig
     faster_whisper: FasterWhisperConfig
     subtitle: SubtitleConfig
+    audio: AudioConfig
     segmentation: SegmentationConfig
 
 
@@ -153,6 +175,7 @@ def load_config(path: Path) -> PipelineConfig:
     azure_data = dict(data.get("azure_speech", {}))
     faster_whisper_data = dict(data.get("faster_whisper", {}))
     subtitle_data = dict(data.get("subtitle", {}))
+    audio_data = dict(data.get("audio", {}))
     segmentation_data = dict(data.get("segmentation", {}))
 
     env_provider = os.getenv("ASR_PROVIDER")
@@ -164,6 +187,8 @@ def load_config(path: Path) -> PipelineConfig:
     env_fw_device = os.getenv("FASTER_WHISPER_DEVICE")
     env_fw_compute_type = os.getenv("FASTER_WHISPER_COMPUTE_TYPE")
     env_fw_download_root = os.getenv("FASTER_WHISPER_DOWNLOAD_ROOT")
+    env_audio_demucs_model = os.getenv("AUDIO_DEMUCS_MODEL")
+    env_audio_demucs_device = os.getenv("AUDIO_DEMUCS_DEVICE")
 
     if env_provider:
         asr_data["provider"] = env_provider
@@ -183,6 +208,10 @@ def load_config(path: Path) -> PipelineConfig:
         faster_whisper_data["compute_type"] = env_fw_compute_type
     if env_fw_download_root:
         faster_whisper_data["download_root"] = env_fw_download_root
+    if env_audio_demucs_model:
+        audio_data["demucs_model"] = env_audio_demucs_model
+    if env_audio_demucs_device:
+        audio_data["demucs_device"] = env_audio_demucs_device
 
     asr_config = AsrConfig(
         provider=str(asr_data.get("provider", "faster-whisper")),
@@ -225,6 +254,14 @@ def load_config(path: Path) -> PipelineConfig:
         allow_asr_fallback=bool(subtitle_data.get("allow_asr_fallback", True)),
     )
 
+    audio_config = AudioConfig(
+        method=str(audio_data.get("method", "demucs")),
+        demucs_model=str(audio_data.get("demucs_model", "htdemucs")),
+        demucs_device=str(audio_data.get("demucs_device", "cpu")),
+        mp3_bitrate_kbps=int(audio_data.get("mp3_bitrate_kbps", 192)),
+        jobs=int(audio_data.get("jobs", 0)),
+    )
+
     segmentation_config = SegmentationConfig(
         silence_threshold_db=float(segmentation_data.get("silence_threshold_db", -35.0)),
         min_silence_duration_ms=int(segmentation_data.get("min_silence_duration_ms", 250)),
@@ -241,5 +278,6 @@ def load_config(path: Path) -> PipelineConfig:
         azure_speech=azure_config,
         faster_whisper=faster_whisper_config,
         subtitle=subtitle_config,
+        audio=audio_config,
         segmentation=segmentation_config,
     )
