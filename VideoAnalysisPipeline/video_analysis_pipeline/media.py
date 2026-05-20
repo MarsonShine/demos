@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import locale
+import math
 import os
 import re
 import shutil
@@ -24,6 +25,8 @@ SILENCE_END_PATTERN = re.compile(
 TARGET_SIZE_SAFETY_RATIO = 0.985
 MIN_AUDIO_BITRATE_KBPS = 32
 MIN_VIDEO_BITRATE_KBPS = 64
+AUTO_SOURCE_AUDIO_SHARE_RATIO = 0.25
+AUTO_VIDEO_FLOOR_PIXELS_PER_KBPS = 1400
 
 
 @dataclass(slots=True)
@@ -94,12 +97,7 @@ def _calculate_target_bitrate_kbps(
     minimum_kbps: int,
     label: str,
 ) -> int:
-    if target_size_kb <= 0:
-        raise ValueError(f"{label} target_size_kb must be greater than 0 to derive bitrate.")
-    if duration_ms <= 0:
-        raise ValueError(f"{label} duration must be greater than 0 to derive bitrate.")
-
-    bitrate_kbps = int((target_size_kb * 8192 * TARGET_SIZE_SAFETY_RATIO) / duration_ms)
+    bitrate_kbps = _estimate_target_bitrate_kbps(target_size_kb=target_size_kb, duration_ms=duration_ms, label=label)
     if bitrate_kbps < minimum_kbps:
         raise ValueError(
             f"{label} target_size_kb={target_size_kb} is too small for duration {duration_ms}ms. "
@@ -108,39 +106,160 @@ def _calculate_target_bitrate_kbps(
     return bitrate_kbps
 
 
+def _estimate_target_bitrate_kbps(target_size_kb: int, duration_ms: int, label: str) -> int:
+    if target_size_kb <= 0:
+        raise ValueError(f"{label} target_size_kb must be greater than 0 to derive bitrate.")
+    if duration_ms <= 0:
+        raise ValueError(f"{label} duration must be greater than 0 to derive bitrate.")
+
+    return max(1, int((target_size_kb * 8192 * TARGET_SIZE_SAFETY_RATIO) / duration_ms))
+
+
+def _estimate_media_bitrate_kbps(size_kb: float, duration_ms: int, label: str) -> int:
+    if size_kb <= 0:
+        raise ValueError(f"{label} size_kb must be greater than 0 to derive bitrate.")
+    if duration_ms <= 0:
+        raise ValueError(f"{label} duration must be greater than 0 to derive bitrate.")
+
+    return max(1, int((size_kb * 8192) / duration_ms))
+
+
+def _estimate_target_size_kb(duration_ms: int, bitrate_kbps: int) -> int:
+    if duration_ms <= 0:
+        raise ValueError("duration_ms must be greater than 0 to estimate target size.")
+    if bitrate_kbps <= 0:
+        raise ValueError("bitrate_kbps must be greater than 0 to estimate target size.")
+    return math.ceil((bitrate_kbps * duration_ms) / (8192 * TARGET_SIZE_SAFETY_RATIO))
+
+
+def _warn_target_size_adjustment(message: str) -> None:
+    print(f"WARNING: {message}", file=sys.stderr)
+
+
+def _estimate_source_audio_bitrate_kbps(
+    source_total_bitrate_kbps: int,
+    preferred_audio_bitrate_kbps: int,
+    has_audio: bool,
+) -> int:
+    if not has_audio:
+        return 0
+
+    available_audio_kbps = max(0, source_total_bitrate_kbps - MIN_VIDEO_BITRATE_KBPS)
+    if available_audio_kbps == 0:
+        return 0
+
+    estimated_audio_kbps = max(MIN_AUDIO_BITRATE_KBPS, int(source_total_bitrate_kbps * AUTO_SOURCE_AUDIO_SHARE_RATIO))
+    return min(preferred_audio_bitrate_kbps, estimated_audio_kbps, available_audio_kbps)
+
+
+def _format_video_resolution(metadata: MediaMetadata) -> str:
+    if metadata.width and metadata.height:
+        return f"{metadata.width}x{metadata.height}"
+    return "unknown resolution"
+
+
+def _resolve_auto_min_video_bitrate_kbps(
+    config: VideoOutputConfig,
+    metadata: MediaMetadata,
+    source_size_kb: float,
+) -> int:
+    source_total_bitrate_kbps = _estimate_media_bitrate_kbps(
+        size_kb=source_size_kb,
+        duration_ms=metadata.duration_ms,
+        label="source video",
+    )
+    source_audio_bitrate_kbps = _estimate_source_audio_bitrate_kbps(
+        source_total_bitrate_kbps=source_total_bitrate_kbps,
+        preferred_audio_bitrate_kbps=config.audio_bitrate_kbps,
+        has_audio=metadata.audio_streams > 0,
+    )
+    source_video_bitrate_kbps = max(MIN_VIDEO_BITRATE_KBPS, source_total_bitrate_kbps - source_audio_bitrate_kbps)
+    resolution_floor_kbps = MIN_VIDEO_BITRATE_KBPS
+    if metadata.width and metadata.height:
+        resolution_floor_kbps = max(
+            MIN_VIDEO_BITRATE_KBPS,
+            math.ceil((metadata.width * metadata.height) / AUTO_VIDEO_FLOOR_PIXELS_PER_KBPS),
+        )
+    return max(MIN_VIDEO_BITRATE_KBPS, min(source_video_bitrate_kbps, resolution_floor_kbps))
+
+
 def _resolve_background_audio_bitrate_kbps(config: AudioConfig, source_size_kb: float, duration_ms: int) -> int:
     if config.target_size_ratio > 0:
-        target_size_kb = round(source_size_kb * config.target_size_ratio)
-        return _calculate_target_bitrate_kbps(
+        target_size_kb = max(1, round(source_size_kb * config.target_size_ratio))
+        bitrate_kbps = _estimate_target_bitrate_kbps(
             target_size_kb=target_size_kb,
             duration_ms=duration_ms,
-            minimum_kbps=MIN_AUDIO_BITRATE_KBPS,
             label="audio",
         )
+        if bitrate_kbps < MIN_AUDIO_BITRATE_KBPS:
+            minimum_size_kb = _estimate_target_size_kb(duration_ms=duration_ms, bitrate_kbps=MIN_AUDIO_BITRATE_KBPS)
+            _warn_target_size_adjustment(
+                f"audio target_size_kb={target_size_kb} is too small for duration {duration_ms}ms; "
+                f"using minimum bitrate {MIN_AUDIO_BITRATE_KBPS} kbps instead "
+                f"(estimated output size about {minimum_size_kb} KB)."
+            )
+            return MIN_AUDIO_BITRATE_KBPS
+        return bitrate_kbps
     return config.mp3_bitrate_kbps
 
 
-def _resolve_video_export_bitrates_kbps(config: VideoOutputConfig, metadata: MediaMetadata, target_size_kb: int) -> tuple[int, int]:
-    total_bitrate_kbps = _calculate_target_bitrate_kbps(
+def _resolve_video_export_bitrates_kbps(
+    config: VideoOutputConfig,
+    metadata: MediaMetadata,
+    target_size_kb: int,
+    source_size_kb: float,
+) -> tuple[int, int]:
+    total_bitrate_kbps = _estimate_target_bitrate_kbps(
         target_size_kb=target_size_kb,
         duration_ms=metadata.duration_ms,
-        minimum_kbps=1,
         label="video",
+    )
+    auto_min_video_bitrate_kbps = _resolve_auto_min_video_bitrate_kbps(
+        config=config,
+        metadata=metadata,
+        source_size_kb=source_size_kb,
     )
 
     if metadata.audio_streams > 0:
         video_bitrate_kbps = total_bitrate_kbps - config.audio_bitrate_kbps
-        if video_bitrate_kbps < MIN_VIDEO_BITRATE_KBPS:
-            raise ValueError(
-                f"video target_size_kb={target_size_kb} is too small after reserving "
-                f"{config.audio_bitrate_kbps} kbps for audio."
-            )
-        return video_bitrate_kbps, config.audio_bitrate_kbps
+        if video_bitrate_kbps >= auto_min_video_bitrate_kbps:
+            return video_bitrate_kbps, config.audio_bitrate_kbps
 
-    if total_bitrate_kbps < MIN_VIDEO_BITRATE_KBPS:
-        raise ValueError(
-            f"video target_size_kb={target_size_kb} is too small for duration {metadata.duration_ms}ms."
+        adjusted_audio_bitrate_kbps = total_bitrate_kbps - auto_min_video_bitrate_kbps
+        if adjusted_audio_bitrate_kbps >= MIN_AUDIO_BITRATE_KBPS:
+            _warn_target_size_adjustment(
+                f"video target_size_kb={target_size_kb} is too small for configured audio bitrate "
+                f"{config.audio_bitrate_kbps} kbps; lowering audio bitrate to "
+                f"{adjusted_audio_bitrate_kbps} kbps to preserve auto video quality floor "
+                f"{auto_min_video_bitrate_kbps} kbps."
+            )
+            return auto_min_video_bitrate_kbps, adjusted_audio_bitrate_kbps
+
+        minimum_total_size_kb = _estimate_target_size_kb(
+            duration_ms=metadata.duration_ms,
+            bitrate_kbps=auto_min_video_bitrate_kbps + MIN_AUDIO_BITRATE_KBPS,
         )
+        _warn_target_size_adjustment(
+            f"video target_size_kb={target_size_kb} is too small for duration {metadata.duration_ms}ms "
+            f"with audio; preserving auto video quality floor {auto_min_video_bitrate_kbps} kbps "
+            f"for {_format_video_resolution(metadata)} and using minimum audio bitrate "
+            f"{MIN_AUDIO_BITRATE_KBPS} kbps audio instead "
+            f"(estimated output size about {minimum_total_size_kb} KB)."
+        )
+        return auto_min_video_bitrate_kbps, MIN_AUDIO_BITRATE_KBPS
+
+    if total_bitrate_kbps < auto_min_video_bitrate_kbps:
+        minimum_video_size_kb = _estimate_target_size_kb(
+            duration_ms=metadata.duration_ms,
+            bitrate_kbps=auto_min_video_bitrate_kbps,
+        )
+        _warn_target_size_adjustment(
+            f"video target_size_kb={target_size_kb} is too small for duration {metadata.duration_ms}ms; "
+            f"preserving auto video quality floor {auto_min_video_bitrate_kbps} kbps "
+            f"for {_format_video_resolution(metadata)} instead "
+            f"(estimated output size about {minimum_video_size_kb} KB)."
+        )
+        return auto_min_video_bitrate_kbps, 0
     return total_bitrate_kbps, 0
 
 
@@ -150,9 +269,14 @@ def copy_source_video(source_path: Path, target_path: Path, config: VideoOutputC
         config.validate()
     if config is not None and config.target_size_ratio > 0:
         source_size_kb = source_path.stat().st_size / 1024
-        target_size_kb = round(source_size_kb * config.target_size_ratio)
+        target_size_kb = max(1, round(source_size_kb * config.target_size_ratio))
         source_metadata = probe_media(source_path)
-        video_bitrate_kbps, audio_bitrate_kbps = _resolve_video_export_bitrates_kbps(config, source_metadata, target_size_kb)
+        video_bitrate_kbps, audio_bitrate_kbps = _resolve_video_export_bitrates_kbps(
+            config,
+            source_metadata,
+            target_size_kb,
+            source_size_kb,
+        )
         actual_target_path = target_path
         if source_path.resolve() == target_path.resolve():
             actual_target_path = target_path.with_name(f"{target_path.stem}.transcoding{target_path.suffix}")

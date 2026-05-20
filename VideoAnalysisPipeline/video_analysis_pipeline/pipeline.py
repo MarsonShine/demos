@@ -551,6 +551,7 @@ def process_batch(
     workbook_output: Path | None = None,
     generate_overview: bool = True,
     final_output: str = "standard",
+    resume: bool = False,
 ) -> list[ProcessedItem]:
     discovered_inputs = discover_batch_inputs(
         input_root=input_root,
@@ -563,6 +564,7 @@ def process_batch(
     batch_started_at = perf_counter()
     actual_workbook_output = _resolve_batch_workbook_output(output_root, workbook_output, final_output)
     item_progress: dict[str, dict[str, Any]] = {}
+    completed_output_dirs = _load_completed_batch_output_dirs(batch_progress_path) if resume else set()
 
     def write_batch_progress(current_item: str | None = None, current_stage: str | None = None, status: str = "running") -> None:
         write_json(
@@ -589,6 +591,22 @@ def process_batch(
             final_output=final_output,
         )
         item_key = str(output_dir)
+        if item_key in completed_output_dirs:
+            resumed_item = _try_load_completed_batch_item(output_dir)
+            if resumed_item is not None:
+                item_progress[item_key] = {
+                    "sequence_no": sequence_no,
+                    "name": batch_item.source_mp4.stem,
+                    "output_dir": str(output_dir),
+                    "status": "completed",
+                    "current_stage": None,
+                    "timings_seconds": resumed_item.timings or {},
+                }
+                processed_items.append(resumed_item)
+                write_batch_progress(current_item=item_key, status="running")
+                continue
+            print(f"WARNING: Could not resume completed item from {output_dir}; reprocessing it.")
+
         item_progress[item_key] = {
             "sequence_no": sequence_no,
             "name": batch_item.source_mp4.stem,
@@ -1150,6 +1168,56 @@ def _read_json_payload(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _load_completed_batch_output_dirs(batch_progress_path: Path) -> set[str]:
+    if not batch_progress_path.exists():
+        return set()
+
+    payload = _read_json_payload(batch_progress_path)
+    items = payload.get("items")
+    if not isinstance(items, list):
+        return set()
+
+    completed_output_dirs: set[str] = set()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        if item.get("status") != "completed":
+            continue
+        output_dir_value = item.get("output_dir")
+        if output_dir_value:
+            completed_output_dirs.add(str(output_dir_value))
+    return completed_output_dirs
+
+
+def _try_load_completed_batch_item(output_dir: Path) -> ProcessedItem | None:
+    try:
+        existing_output = _load_existing_output(output_dir)
+    except (FileNotFoundError, ValueError, json.JSONDecodeError):
+        return None
+
+    manifest_outputs = existing_output.manifest.get("outputs")
+    review_page_path = None
+    workbook_path = None
+    if isinstance(manifest_outputs, dict):
+        review_page_path = _resolve_existing_optional_path(existing_output.output_dir, manifest_outputs.get("review_html"))
+        workbook_path = _resolve_existing_optional_path(existing_output.output_dir, manifest_outputs.get("workbook"))
+
+    overview_payload = existing_output.manifest.get("overview")
+    overview_row = OverviewRow.from_json(overview_payload) if isinstance(overview_payload, dict) else None
+    source_asset = _resolve_existing_asset_path(existing_output.output_dir, existing_output.manifest, "source_mp4", "02.mp4")
+    timings = _coerce_timings_map(existing_output.manifest.get("timings_seconds"))
+    return ProcessedItem(
+        sequence_no=existing_output.sequence_no,
+        source_mp4=source_asset,
+        output_dir=existing_output.output_dir,
+        workbook_path=workbook_path,
+        review_page_path=review_page_path,
+        segments=existing_output.segments,
+        overview_row=overview_row,
+        timings=timings or None,
+    )
+
+
 def _resolve_existing_asset_path(output_dir: Path, manifest: dict[str, Any], manifest_key: str, default_name: str) -> Path:
     value = manifest.get(manifest_key)
     if value:
@@ -1158,6 +1226,17 @@ def _resolve_existing_asset_path(output_dir: Path, manifest: dict[str, Any], man
             return candidate
         return output_dir / candidate
     return output_dir / default_name
+
+
+def _resolve_existing_optional_path(output_dir: Path, value: object | None) -> Path | None:
+    if not value:
+        return None
+    candidate = Path(str(value))
+    if not candidate.is_absolute():
+        candidate = output_dir / candidate
+    if candidate.exists():
+        return candidate
+    return None
 
 
 def _resolve_existing_workbook_path(output_dir: Path, manifest: dict[str, Any]) -> Path:

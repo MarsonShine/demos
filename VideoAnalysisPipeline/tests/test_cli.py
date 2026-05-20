@@ -116,6 +116,26 @@ class CliTests(unittest.TestCase):
         self.assertEqual(process_batch_mock.call_args.kwargs["final_output"], "mod")
         self.assertEqual(process_batch_mock.call_args.kwargs["workbook_output"], Path("E:\\tmp\\output") / "movie_dubbing.xlsx")
 
+    def test_batch_can_resume_from_existing_progress(self) -> None:
+        config = _build_config_stub()
+        with patch("video_analysis_pipeline.cli.load_config", return_value=config), patch(
+            "video_analysis_pipeline.cli.process_batch",
+            return_value=[],
+        ) as process_batch_mock:
+            exit_code = main(
+                [
+                    "batch",
+                    "--input-root",
+                    "E:\\tmp\\input",
+                    "--output-root",
+                    "E:\\tmp\\output",
+                    "--resume",
+                ]
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(process_batch_mock.call_args.kwargs["resume"])
+
     def test_single_can_override_export_target_sizes(self) -> None:
         config = _build_config_stub()
         with patch("video_analysis_pipeline.cli.load_config", return_value=config), patch(

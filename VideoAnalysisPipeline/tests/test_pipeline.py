@@ -261,6 +261,104 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(workbook.worksheets[0].cell(row=2, column=3).value, 1)
             self.assertEqual(workbook.worksheets[0].cell(row=2, column=4).value, "A Fun Day Out")
 
+    def test_process_batch_resume_skips_completed_items(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            input_root = Path(tmp_dir) / "input"
+            output_root = Path(tmp_dir) / "output"
+            first_job = input_root / "lesson-01"
+            second_job = input_root / "lesson-02"
+            first_job.mkdir(parents=True)
+            second_job.mkdir(parents=True)
+            (first_job / "clip.mp4").write_bytes(b"fake")
+            (first_job / "clip.srt").write_text("", encoding="utf-8")
+            (second_job / "clip.mp4").write_bytes(b"fake")
+            (second_job / "clip.srt").write_text("", encoding="utf-8")
+
+            resumed_output_dir = output_root / "lesson-01"
+            resumed_output_dir.mkdir(parents=True)
+            (resumed_output_dir / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "sequence_no": 1,
+                        "source_mp4": str(resumed_output_dir / "02.mp4"),
+                        "outputs": {
+                            "review_html": None,
+                            "workbook": None,
+                        },
+                        "timings_seconds": {"copy-source-video": 1.25},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (resumed_output_dir / "segments.json").write_text(
+                json.dumps(
+                    {
+                        "sequence_no": 1,
+                        "source_mp4": str(resumed_output_dir / "02.mp4"),
+                        "segments": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (resumed_output_dir / "subtitle_spans.json").write_text(
+                json.dumps({"subtitle_spans": []}),
+                encoding="utf-8",
+            )
+            (output_root / "batch_progress.json").write_text(
+                json.dumps(
+                    {
+                        "items": [
+                            {
+                                "output_dir": str(resumed_output_dir),
+                                "status": "completed",
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            processed_output_dirs: list[Path] = []
+
+            def fake_process_single_video(
+                source_mp4: Path,
+                output_dir: Path,
+                sequence_no: int,
+                config: object,
+                source_srt: Path | None = None,
+                template_path: Path | None = None,
+                workbook_output: Path | None = None,
+                transcriber: object | None = None,
+                progress_callback: object | None = None,
+                generate_overview: bool = True,
+            ) -> ProcessedItem:
+                processed_output_dirs.append(output_dir)
+                return ProcessedItem(
+                    sequence_no=sequence_no,
+                    source_mp4=source_mp4,
+                    output_dir=output_dir,
+                    workbook_path=None,
+                    review_page_path=None,
+                    segments=[],
+                )
+
+            with patch("video_analysis_pipeline.pipeline.process_single_video", side_effect=fake_process_single_video):
+                results = process_batch(
+                    input_root=input_root,
+                    output_root=output_root,
+                    source_name=None,
+                    srt_name=None,
+                    config=object(),
+                    template_path=None,
+                    workbook_output=None,
+                    generate_overview=False,
+                    resume=True,
+                )
+
+            self.assertEqual(processed_output_dirs, [output_root / "lesson-02"])
+            self.assertEqual([item.output_dir for item in results], [output_root / "lesson-01", output_root / "lesson-02"])
+            self.assertEqual(results[0].timings, {"copy-source-video": 1.25})
+
     def test_process_single_overview_rebuilds_workbook_from_existing_outputs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             output_dir = Path(tmp_dir) / "07 The Lion And The Mouse"

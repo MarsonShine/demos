@@ -42,6 +42,14 @@ _SKIP_STEP_TO_FIELD = {
 }
 
 
+def add_resume_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume a batch run by skipping items already marked completed in output_root/batch_progress.json.",
+    )
+
+
 def add_skip_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--skip",
@@ -137,6 +145,7 @@ def build_parser() -> argparse.ArgumentParser:
     batch_parser.add_argument("--asr-provider", type=str, default=None, help="Override ASR provider, for example faster-whisper or azure-speech.")
     add_export_size_args(batch_parser)
     add_skip_args(batch_parser)
+    add_resume_arg(batch_parser)
 
     batch_segments_parser = subparsers.add_parser(
         "batch-segments",
@@ -151,6 +160,7 @@ def build_parser() -> argparse.ArgumentParser:
     batch_segments_parser.add_argument("--asr-provider", type=str, default=None, help="Override ASR provider, for example faster-whisper or azure-speech.")
     add_export_size_args(batch_segments_parser)
     add_skip_args(batch_segments_parser)
+    add_resume_arg(batch_segments_parser)
 
     batch_overview_parser = subparsers.add_parser(
         "batch-overview",
@@ -295,6 +305,7 @@ def main(argv: list[str] | None = None) -> int:
                 template_path=template_path,
                 workbook_output=workbook_output,
                 final_output=args.final_output,
+                resume=args.resume,
             )
             print(f"Processed items: {len(results)}")
             print(f"Workbook: {workbook_output}")
@@ -310,6 +321,7 @@ def main(argv: list[str] | None = None) -> int:
                 template_path=None,
                 workbook_output=None,
                 generate_overview=False,
+                resume=args.resume,
             )
             print(f"Processed items: {len(results)}")
             return 0

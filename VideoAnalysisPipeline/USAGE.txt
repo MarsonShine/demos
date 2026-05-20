@@ -66,7 +66,7 @@ Relevant config in `pipeline_config.json`:
 Background-music output config:
 
     "video": {
-      "target_size_kb": 0,
+      "target_size_ratio": 0.0,
       "audio_bitrate_kbps": 128
     }
 
@@ -75,7 +75,7 @@ Background-music output config:
       "demucs_model": "htdemucs",
       "demucs_device": "cpu",
       "mp3_bitrate_kbps": 192,
-      "target_size_kb": 0,
+      "target_size_ratio": 0.0,
       "cache_enabled": true,
       "cache_dir": ".video_pipeline_cache\\bgm"
     }
@@ -83,8 +83,10 @@ Background-music output config:
 The pipeline still extracts a temporary full-mix analysis track for ASR and silence detection.
 The persisted `03.mp3` file is now the accompaniment/BGM track.
 When the same source video is reprocessed with the same audio settings, the pipeline reuses the cached BGM stem instead of rerunning Demucs.
-If `video.target_size_kb` is greater than 0, `02.mp4` is transcoded to fit that size budget and uses `video.audio_bitrate_kbps` for the embedded AAC audio track.
-If `audio.target_size_kb` is greater than 0, `03.mp3` derives its MP3 bitrate from duration and the target size.
+If `video.target_size_ratio` is greater than 0, `02.mp4` is transcoded toward that source-size ratio and uses `video.audio_bitrate_kbps` as the preferred embedded AAC bitrate.
+If the requested video target is too small, the pipeline automatically lowers audio bitrate first, then falls back to minimum safe audio/video bitrates instead of failing the whole run.
+If `audio.target_size_ratio` is greater than 0, `03.mp3` derives its MP3 bitrate from duration and the target size.
+If the requested audio target is too small, the pipeline automatically falls back to the minimum 32 kbps MP3 bitrate instead of failing.
 
 You can also override from the command line:
 
@@ -171,8 +173,8 @@ Target-size export example:
       --source-mp4 "C:\video-analysis\input\job-001\02.mp4" `
       --source-srt "C:\video-analysis\input\job-001\02.srt" `
       --output-dir "C:\video-analysis\output\job-001_review" `
-      --video-target-size-kb 9149 `
-      --audio-target-size-kb 955
+  --video-target-size-ratio 0.0833 `
+  --audio-target-size-ratio 0.4380
 
 3.2 Auto-discover sidecar SRT
 
@@ -244,8 +246,8 @@ Target-size export run:
     py run_pipeline.py batch `
       --input-root "C:\video-analysis\input" `
       --output-root "C:\video-analysis\output_batch" `
-      --video-target-size-kb 9149 `
-      --audio-target-size-kb 955
+  --video-target-size-ratio 0.1233 `
+  --audio-target-size-ratio 0.7380
 
 Output tree:
 
@@ -289,8 +291,9 @@ Optional filters:
 - `--source-name 02.mp4` only processes folders whose single MP4 has that filename
 - `--srt-name 02.srt` only processes folders whose single SRT has that filename
 - `--final-output mod` switches final packaging to MOD layout (`movie_dubbing.xlsx` + `dubbing/<sequence_no>`)
-- `--video-target-size-kb 9149` derives a video bitrate budget for exported `02.mp4`
-- `--audio-target-size-kb 955` derives an MP3 bitrate budget for exported `03.mp3`
+- `--video-target-size-ratio 0.1233` derives a ratio-based video bitrate budget for exported `02.mp4`
+- `--audio-target-size-ratio 0.7380` derives a ratio-based MP3 bitrate budget for exported `03.mp3`
+- `--resume` skips batch items already marked completed in `batch_progress.json` and continues from the first unfinished item
 
 4.1 Batch segment-only mode
 
@@ -311,6 +314,17 @@ To rebuild overview workbooks from existing generated outputs without rerunning 
 
 This refreshes each child folder's `dubbing.result.xlsx`, then rebuilds the merged workbook under the batch root.
 For command compatibility with normal batch mode, `batch-overview` also accepts `--input-root`, but the overview rebuild only reads existing generated outputs from `--output-root`.
+
+4.3 Batch resume after failure
+
+If a batch run stops midway, rerun the same command with `--resume`:
+
+    py run_pipeline.py batch `
+      --input-root "C:\video-analysis\input" `
+      --output-root "C:\video-analysis\output_batch" `
+      --resume
+
+`--resume` reads `batch_progress.json`, keeps already completed items in the final merged workbook inputs, and only reprocesses the first unfinished item and everything after it.
 
 
 5. Step-Skip Configuration
@@ -412,7 +426,7 @@ Typical abnormal flags:
 - `progress.json` and `batch_progress.json` record the current stage and per-module timings while the pipeline runs.
 - Workbook sheet 1 is generated automatically from the produced assets, fixed overview metadata, and the Azure OpenAI summary.
 - In `batch --final-output mod`, intermediate files are cleaned after packaging, including `batch_progress.json`, `batch_summary.json`, `manifest.json`, `progress.json`, `review.html`, `segments.csv`, `segments.json`, and `subtitle_spans.json`.
-- Target-size export works from media duration, so actual file size is guided by the requested KB budget rather than byte-for-byte guaranteed.
+- Target-size export works from media duration and source-size ratios, so actual file size is guided rather than byte-for-byte guaranteed; if the requested target is below the minimum safe bitrate floor, the tool now clamps to the minimum viable bitrate and may emit a larger file instead of failing.
 - If `overview.difficulty` is set in config, that explicit value overrides the automatic `1-5` subtitle-complexity score.
 
 

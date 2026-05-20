@@ -122,6 +122,41 @@ class MediaTests(unittest.TestCase):
             self.assertEqual(output_audio.read_bytes(), b"bgm-bytes")
 
     @patch("video_analysis_pipeline.media.probe_media")
+    @patch("video_analysis_pipeline.media.subprocess.run")
+    def test_extract_background_audio_mp3_clamps_to_minimum_bitrate_for_tiny_targets(
+        self,
+        mock_run: object,
+        mock_probe_media: object,
+    ) -> None:
+        mock_probe_media.return_value = MediaMetadata(path="analysis.mp3", duration_ms=240_000, video_streams=0, audio_streams=1)
+
+        def fake_run(args: list[str], capture_output: bool, check: bool) -> subprocess.CompletedProcess[bytes]:
+            self.assertEqual(args[args.index("--mp3-bitrate") + 1], "32")
+            output_root = Path(args[args.index("-o") + 1])
+            model_name = args[args.index("-n") + 1]
+            source_audio = Path(args[-1])
+            accompaniment_path = output_root / model_name / source_audio.stem / "no_vocals.mp3"
+            accompaniment_path.parent.mkdir(parents=True, exist_ok=True)
+            accompaniment_path.write_bytes(b"bgm-bytes")
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout=b"", stderr=b"")
+
+        mock_run.side_effect = fake_run
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            source_audio = Path(tmp_dir) / "analysis.mp3"
+            output_audio = Path(tmp_dir) / "03.mp3"
+            source_audio.write_bytes(b"x" * (100 * 1024))
+
+            result = extract_background_audio_mp3(
+                source_audio,
+                output_audio,
+                AudioConfig(target_size_ratio=0.01),
+            )
+
+            self.assertEqual(result.path, output_audio)
+            self.assertEqual(output_audio.read_bytes(), b"bgm-bytes")
+
+    @patch("video_analysis_pipeline.media.probe_media")
     @patch("video_analysis_pipeline.media.run_command")
     def test_copy_source_video_transcodes_when_target_size_is_configured(
         self,
@@ -143,6 +178,60 @@ class MediaTests(unittest.TestCase):
             source_video = Path(tmp_dir) / "source.mp4"
             output_video = Path(tmp_dir) / "02.mp4"
             source_video.write_bytes(b"x" * (9149 * 1024))  # 9149 KB; ratio=1.0 => target=9149 KB => video bitrate=179
+
+            result = copy_source_video(source_video, output_video, VideoOutputConfig(target_size_ratio=1.0, audio_bitrate_kbps=128))
+
+            self.assertEqual(result, output_video)
+            self.assertEqual(output_video.read_bytes(), b"compressed-video")
+
+    @patch("video_analysis_pipeline.media.probe_media")
+    @patch("video_analysis_pipeline.media.run_command")
+    def test_copy_source_video_lowers_audio_bitrate_when_target_is_tight(
+        self,
+        mock_run_command: object,
+        mock_probe_media: object,
+    ) -> None:
+        mock_probe_media.return_value = MediaMetadata(path="source.mp4", duration_ms=45_000, video_streams=1, audio_streams=1)
+
+        def fake_run_command(args: list[str]) -> subprocess.CompletedProcess[str]:
+            self.assertEqual(args[args.index("-b:a") + 1], "76k")
+            self.assertEqual(args[args.index("-b:v") + 1], "64k")
+            Path(args[-1]).write_bytes(b"compressed-video")
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+        mock_run_command.side_effect = fake_run_command
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            source_video = Path(tmp_dir) / "source.mp4"
+            output_video = Path(tmp_dir) / "02.mp4"
+            source_video.write_bytes(b"x" * (784 * 1024))
+
+            result = copy_source_video(source_video, output_video, VideoOutputConfig(target_size_ratio=1.0, audio_bitrate_kbps=128))
+
+            self.assertEqual(result, output_video)
+            self.assertEqual(output_video.read_bytes(), b"compressed-video")
+
+    @patch("video_analysis_pipeline.media.probe_media")
+    @patch("video_analysis_pipeline.media.run_command")
+    def test_copy_source_video_uses_minimum_bitrates_when_target_is_too_small(
+        self,
+        mock_run_command: object,
+        mock_probe_media: object,
+    ) -> None:
+        mock_probe_media.return_value = MediaMetadata(path="source.mp4", duration_ms=120_000, video_streams=1, audio_streams=1)
+
+        def fake_run_command(args: list[str]) -> subprocess.CompletedProcess[str]:
+            self.assertEqual(args[args.index("-b:a") + 1], "32k")
+            self.assertEqual(args[args.index("-b:v") + 1], "64k")
+            Path(args[-1]).write_bytes(b"compressed-video")
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+        mock_run_command.side_effect = fake_run_command
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            source_video = Path(tmp_dir) / "source.mp4"
+            output_video = Path(tmp_dir) / "02.mp4"
+            source_video.write_bytes(b"x" * (784 * 1024))
 
             result = copy_source_video(source_video, output_video, VideoOutputConfig(target_size_ratio=1.0, audio_bitrate_kbps=128))
 
