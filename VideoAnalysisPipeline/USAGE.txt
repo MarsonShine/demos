@@ -19,6 +19,7 @@ This tool takes a source MP4 and optional SRT file, then generates:
 
 `02.mp4` and `03.mp3` also support target-size export controls.
 When a target size is configured, the pipeline derives a bitrate from media duration instead of using the default copy/fixed-bitrate behavior.
+Video export now also applies an automatic quality floor based on the source bitrate and resolution so already-small videos are not blindly over-compressed.
 
 
 1. Prerequisites
@@ -84,7 +85,7 @@ The pipeline still extracts a temporary full-mix analysis track for ASR and sile
 The persisted `03.mp3` file is now the accompaniment/BGM track.
 When the same source video is reprocessed with the same audio settings, the pipeline reuses the cached BGM stem instead of rerunning Demucs.
 If `video.target_size_ratio` is greater than 0, `02.mp4` is transcoded toward that source-size ratio and uses `video.audio_bitrate_kbps` as the preferred embedded AAC bitrate.
-If the requested video target is too small, the pipeline automatically lowers audio bitrate first, then falls back to minimum safe audio/video bitrates instead of failing the whole run.
+If the requested video target is too small, the pipeline automatically lowers audio bitrate first, then preserves an automatic video quality floor derived from the source bitrate and resolution, and only then falls back to minimum safe audio/video bitrates instead of failing the whole run.
 If `audio.target_size_ratio` is greater than 0, `03.mp3` derives its MP3 bitrate from duration and the target size.
 If the requested audio target is too small, the pipeline automatically falls back to the minimum 32 kbps MP3 bitrate instead of failing.
 
@@ -426,7 +427,7 @@ Typical abnormal flags:
 - `progress.json` and `batch_progress.json` record the current stage and per-module timings while the pipeline runs.
 - Workbook sheet 1 is generated automatically from the produced assets, fixed overview metadata, and the Azure OpenAI summary.
 - In `batch --final-output mod`, intermediate files are cleaned after packaging, including `batch_progress.json`, `batch_summary.json`, `manifest.json`, `progress.json`, `review.html`, `segments.csv`, `segments.json`, and `subtitle_spans.json`.
-- Target-size export works from media duration and source-size ratios, so actual file size is guided rather than byte-for-byte guaranteed; if the requested target is below the minimum safe bitrate floor, the tool now clamps to the minimum viable bitrate and may emit a larger file instead of failing.
+- Target-size export works from media duration and source-size ratios, so actual file size is guided rather than byte-for-byte guaranteed; if the requested target is below the automatic quality floor, the tool clamps upward to preserve readability and may emit a larger file instead of failing.
 - If `overview.difficulty` is set in config, that explicit value overrides the automatic `1-5` subtitle-complexity score.
 
 

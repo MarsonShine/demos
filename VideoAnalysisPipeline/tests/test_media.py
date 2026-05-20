@@ -238,6 +238,74 @@ class MediaTests(unittest.TestCase):
             self.assertEqual(result, output_video)
             self.assertEqual(output_video.read_bytes(), b"compressed-video")
 
+    @patch("video_analysis_pipeline.media.probe_media")
+    @patch("video_analysis_pipeline.media.run_command")
+    def test_copy_source_video_preserves_resolution_based_quality_floor(
+        self,
+        mock_run_command: object,
+        mock_probe_media: object,
+    ) -> None:
+        mock_probe_media.return_value = MediaMetadata(
+            path="source.mp4",
+            duration_ms=60_000,
+            video_streams=1,
+            audio_streams=1,
+            width=854,
+            height=480,
+        )
+
+        def fake_run_command(args: list[str]) -> subprocess.CompletedProcess[str]:
+            self.assertEqual(args[args.index("-b:a") + 1], "32k")
+            self.assertEqual(args[args.index("-b:v") + 1], "293k")
+            Path(args[-1]).write_bytes(b"compressed-video")
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+        mock_run_command.side_effect = fake_run_command
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            source_video = Path(tmp_dir) / "source.mp4"
+            output_video = Path(tmp_dir) / "02.mp4"
+            source_video.write_bytes(b"x" * (3000 * 1024))
+
+            result = copy_source_video(source_video, output_video, VideoOutputConfig(target_size_ratio=0.1, audio_bitrate_kbps=128))
+
+            self.assertEqual(result, output_video)
+            self.assertEqual(output_video.read_bytes(), b"compressed-video")
+
+    @patch("video_analysis_pipeline.media.probe_media")
+    @patch("video_analysis_pipeline.media.run_command")
+    def test_copy_source_video_preserves_small_source_video_bitrate_floor(
+        self,
+        mock_run_command: object,
+        mock_probe_media: object,
+    ) -> None:
+        mock_probe_media.return_value = MediaMetadata(
+            path="source.mp4",
+            duration_ms=60_000,
+            video_streams=1,
+            audio_streams=1,
+            width=854,
+            height=480,
+        )
+
+        def fake_run_command(args: list[str]) -> subprocess.CompletedProcess[str]:
+            self.assertEqual(args[args.index("-b:a") + 1], "32k")
+            self.assertEqual(args[args.index("-b:v") + 1], "184k")
+            Path(args[-1]).write_bytes(b"compressed-video")
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+        mock_run_command.side_effect = fake_run_command
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            source_video = Path(tmp_dir) / "source.mp4"
+            output_video = Path(tmp_dir) / "02.mp4"
+            source_video.write_bytes(b"x" * (1800 * 1024))
+
+            result = copy_source_video(source_video, output_video, VideoOutputConfig(target_size_ratio=0.1, audio_bitrate_kbps=128))
+
+            self.assertEqual(result, output_video)
+            self.assertEqual(output_video.read_bytes(), b"compressed-video")
+
     @patch("video_analysis_pipeline.media.subprocess.run")
     def test_extract_background_audio_mp3_reuses_cache(self, mock_run: object) -> None:
         mock_run.side_effect = AssertionError("demucs should not run when cache is warm")
