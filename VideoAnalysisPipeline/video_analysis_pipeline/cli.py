@@ -6,6 +6,7 @@ from pathlib import Path
 
 from video_analysis_pipeline.config import load_config
 from video_analysis_pipeline.pipeline import (
+    MOD_FINAL_OUTPUT,
     process_batch,
     process_batch_overview,
     process_single_overview,
@@ -68,6 +69,13 @@ def build_parser() -> argparse.ArgumentParser:
     batch_parser.add_argument("--srt-name", type=str, default=None, help="Optional filter: only process folders whose single SRT matches this filename.")
     batch_parser.add_argument("--template", type=Path, default=None, help="Optional Excel template. Defaults to dubbing.xlsx when present.")
     batch_parser.add_argument("--workbook-output", type=Path, default=None, help="Optional merged workbook output path.")
+    batch_parser.add_argument(
+        "--final-output",
+        type=str,
+        choices=["standard", MOD_FINAL_OUTPUT],
+        default="standard",
+        help="Final output layout. Use 'mod' to emit dubbing/<sequence_no> folders and movie_dubbing.xlsx.",
+    )
     batch_parser.add_argument("--language", type=str, default=None, help="Override ASR language, for example en or en-US.")
     batch_parser.add_argument("--asr-provider", type=str, default=None, help="Override ASR provider, for example faster-whisper or azure-speech.")
 
@@ -116,6 +124,18 @@ def resolve_template_path(template_path: Path | None) -> Path | None:
     if default_template.exists():
         return default_template
     return None
+
+
+def resolve_batch_workbook_output(
+    output_root: Path,
+    workbook_output: Path | None,
+    final_output: str,
+) -> Path:
+    if workbook_output is not None:
+        return workbook_output
+    if final_output == MOD_FINAL_OUTPUT:
+        return output_root / "movie_dubbing.xlsx"
+    return output_root / "dubbing.result.xlsx"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -190,7 +210,11 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "batch":
-            workbook_output = args.workbook_output or (args.output_root / "dubbing.result.xlsx")
+            workbook_output = resolve_batch_workbook_output(
+                output_root=args.output_root,
+                workbook_output=args.workbook_output,
+                final_output=args.final_output,
+            )
             results = process_batch(
                 input_root=args.input_root,
                 output_root=args.output_root,
@@ -199,6 +223,7 @@ def main(argv: list[str] | None = None) -> int:
                 srt_name=args.srt_name,
                 template_path=template_path,
                 workbook_output=workbook_output,
+                final_output=args.final_output,
             )
             print(f"Processed items: {len(results)}")
             print(f"Workbook: {workbook_output}")

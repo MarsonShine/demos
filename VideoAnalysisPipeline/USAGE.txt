@@ -139,6 +139,7 @@ Or set environment variables:
 
 The pipeline calls Azure OpenAI once per video, using the full subtitle corpus to generate one concise Chinese overview.
 It does not call the model per segment.
+When `overview.difficulty` is empty in config, the pipeline auto-estimates difficulty from segment count and word complexity (`简单` / `中等` / `较难`).
 
 
 3. Single-file Workflow
@@ -211,6 +212,13 @@ Run:
       --input-root "C:\video-analysis\input" `
       --output-root "C:\video-analysis\output_batch"
 
+MOD final-output run:
+
+    py run_pipeline.py batch `
+      --input-root "C:\video-analysis\input" `
+      --output-root "C:\video-analysis\output_batch" `
+      --final-output mod
+
 Output tree:
 
     C:\video-analysis\output_batch
@@ -232,10 +240,27 @@ Output tree:
           ├─ review.html
           └─ ...
 
+    MOD output tree:
+
+       C:\video-analysis\output_batch
+       ├─ movie_dubbing.xlsx
+       └─ dubbing
+         ├─ 1
+         │  ├─ 01.jpg
+         │  ├─ 01.mp4
+         │  ├─ 02.mp4
+         │  └─ 03.mp3
+         └─ 2
+           ├─ 01.jpg
+           ├─ 01.mp4
+           ├─ 02.mp4
+           └─ 03.mp3
+
 Optional filters:
 
 - `--source-name 02.mp4` only processes folders whose single MP4 has that filename
 - `--srt-name 02.srt` only processes folders whose single SRT has that filename
+- `--final-output mod` switches final packaging to MOD layout (`movie_dubbing.xlsx` + `dubbing/<sequence_no>`)
 
 4.1 Batch segment-only mode
 
@@ -302,6 +327,7 @@ Typical abnormal flags:
 - In batch mode, a folder with missing or multiple MP4/SRT files fails fast instead of guessing.
 - `progress.json` and `batch_progress.json` record the current stage and per-module timings while the pipeline runs.
 - Workbook sheet 1 is generated automatically from the produced assets, fixed overview metadata, and the Azure OpenAI summary.
+- In `batch --final-output mod`, intermediate files are cleaned after packaging, including `batch_progress.json`, `batch_summary.json`, `manifest.json`, `progress.json`, `review.html`, `segments.csv`, `segments.json`, and `subtitle_spans.json`.
 
 
 8. Recommended Production Strategy

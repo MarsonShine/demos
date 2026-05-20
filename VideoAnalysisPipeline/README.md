@@ -21,6 +21,10 @@ Python pipeline for dubbing-prep asset generation.
 4. Use Azure OpenAI Chat Completions once per video to create a concise Chinese overview.
 5. Cache Demucs BGM outputs under `.video_pipeline_cache\bgm` to avoid repeated separation work.
 6. Write `batch_progress.json` and `batch_summary.json` during batch runs.
+7. Support final MOD packaging in batch mode via `--final-output mod`:
+   - root workbook: `movie_dubbing.xlsx`
+   - item folders: `dubbing/<sequence_no>`
+   - remove intermediate JSON/HTML/CSV files after packaging
 
 ## Execution modes
 
@@ -29,6 +33,7 @@ The default commands keep the full automated pipeline:
 ```powershell
 py run_pipeline.py single --source-mp4 <mp4> --output-dir <output>
 py run_pipeline.py batch --input-root <input> --output-root <output>
+py run_pipeline.py batch --input-root <input> --output-root <output> --final-output mod
 ```
 
 You can now split the workflow when you do **not** want to rerun everything:
@@ -43,6 +48,7 @@ py run_pipeline.py batch-overview --output-root <existing-output-root>
 - `single-segments` / `batch-segments`: only generate segmentation assets and review resources.
 - `single-overview` / `batch-overview`: rebuild the overview workbook from existing outputs without rerunning segmentation, ASR, or BGM extraction.
 - `batch-overview` also accepts `--input-root` for command-line compatibility with the normal `batch` form, but it only reads existing outputs from `--output-root`.
+- `batch --final-output mod`: emit MOD-ready assets under `dubbing/<sequence_no>`, write root workbook `movie_dubbing.xlsx`, and clean intermediate artifacts.
 
 ## Azure OpenAI overview
 
@@ -61,3 +67,7 @@ $env:AZURE_OPENAI_DEPLOYMENT = "gpt-5.4-mini"
 ## Documentation
 
 See `USAGE.txt` for the full command reference and configuration details.
+
+Maintenance rule:
+
+- Any change to config fields, CLI arguments, or output structure must update `README.md`, `README.txt`, and `USAGE.txt` in the same change.

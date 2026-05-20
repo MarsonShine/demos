@@ -10,7 +10,7 @@ from openpyxl import load_workbook
 
 from video_analysis_pipeline.config import load_config
 from video_analysis_pipeline.config import SegmentationConfig
-from video_analysis_pipeline.models import Segment, SubtitleSpan, TranscriptUtterance, WordTiming
+from video_analysis_pipeline.models import OverviewRow, Segment, SubtitleSpan, TranscriptUtterance, WordTiming
 from video_analysis_pipeline.pipeline import (
     ProcessedItem,
     _build_leading_title_segment,
@@ -159,6 +159,107 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(received_generate_overview, [False])
             export_workbook_mock.assert_not_called()
 
+    def test_process_batch_mod_outputs_sequence_directories_and_removes_intermediate_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            input_root = Path(tmp_dir) / "input"
+            output_root = Path(tmp_dir) / "output"
+            job_dir = input_root / "story-pack" / "A Fun Day Out"
+            job_dir.mkdir(parents=True)
+            source_mp4 = job_dir / "clip.mp4"
+            source_srt = job_dir / "clip.srt"
+            source_mp4.write_bytes(b"fake")
+            source_srt.write_text("", encoding="utf-8")
+
+            def fake_process_single_video(
+                source_mp4: Path,
+                output_dir: Path,
+                sequence_no: int,
+                config: object,
+                source_srt: Path | None = None,
+                template_path: Path | None = None,
+                workbook_output: Path | None = None,
+                transcriber: object | None = None,
+                progress_callback: object | None = None,
+                generate_overview: bool = True,
+            ) -> ProcessedItem:
+                output_dir.mkdir(parents=True, exist_ok=True)
+                for file_name in [
+                    "01.jpg",
+                    "01.mp4",
+                    "02.mp4",
+                    "03.mp3",
+                    "manifest.json",
+                    "progress.json",
+                    "review.html",
+                    "segments.csv",
+                    "segments.json",
+                    "subtitle_spans.json",
+                ]:
+                    (output_dir / file_name).write_text("artifact", encoding="utf-8")
+                return ProcessedItem(
+                    sequence_no=sequence_no,
+                    source_mp4=source_mp4,
+                    output_dir=output_dir,
+                    workbook_path=None,
+                    review_page_path=output_dir / "review.html",
+                    segments=[
+                        Segment(
+                            sequence_no=sequence_no,
+                            segment_no=1,
+                            text="A fun day out.",
+                            start_ms=0,
+                            end_ms=1_000,
+                        )
+                    ],
+                    overview_row=OverviewRow(
+                        education_stage="小学",
+                        subject="英语",
+                        sequence_no=sequence_no,
+                        movie_name="A Fun Day Out",
+                        video_title="A Fun Day Out",
+                        muted_video="01.mp4",
+                        full_video="02.mp4",
+                        background_audio="03.mp3",
+                        cover_image="01.jpg",
+                        video_description="A short story.",
+                        difficulty="简单",
+                        source="绘本配音",
+                    ),
+                )
+
+            with patch("video_analysis_pipeline.pipeline.process_single_video", side_effect=fake_process_single_video):
+                results = process_batch(
+                    input_root=input_root,
+                    output_root=output_root,
+                    source_name=None,
+                    srt_name=None,
+                    config=object(),
+                    template_path=None,
+                    workbook_output=None,
+                    final_output="mod",
+                )
+
+            self.assertEqual(len(results), 1)
+            item_dir = output_root / "dubbing" / "1"
+            self.assertEqual(results[0].output_dir, item_dir)
+            self.assertTrue((output_root / "movie_dubbing.xlsx").exists())
+            self.assertTrue((item_dir / "01.jpg").exists())
+            self.assertTrue((item_dir / "01.mp4").exists())
+            self.assertTrue((item_dir / "02.mp4").exists())
+            self.assertTrue((item_dir / "03.mp3").exists())
+            self.assertFalse((output_root / "batch_summary.json").exists())
+            self.assertFalse((output_root / "batch_progress.json").exists())
+            self.assertFalse((item_dir / "manifest.json").exists())
+            self.assertFalse((item_dir / "progress.json").exists())
+            self.assertFalse((item_dir / "review.html").exists())
+            self.assertFalse((item_dir / "segments.csv").exists())
+            self.assertFalse((item_dir / "segments.json").exists())
+            self.assertFalse((item_dir / "subtitle_spans.json").exists())
+
+            workbook = load_workbook(output_root / "movie_dubbing.xlsx")
+            self.assertEqual(workbook.worksheets[0].cell(row=2, column=3).value, 1)
+            self.assertEqual(workbook.worksheets[0].cell(row=2, column=4).value, "A Fun Day Out")
+
     def test_process_single_overview_rebuilds_workbook_from_existing_outputs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             output_dir = Path(tmp_dir) / "07 The Lion And The Mouse"
@@ -234,11 +335,13 @@ class PipelineTests(unittest.TestCase):
             workbook = load_workbook(result.workbook_path)
             self.assertEqual(workbook.worksheets[0].cell(row=2, column=4).value, "The Lion And The Mouse")
             self.assertEqual(workbook.worksheets[0].cell(row=2, column=10).value, "狮子和老鼠学会互相帮助。")
+            self.assertEqual(workbook.worksheets[0].cell(row=2, column=11).value, "简单")
             self.assertEqual(workbook.worksheets[1].cell(row=2, column=3).value, "The lion roars loudly.")
 
             manifest_payload = json.loads((output_dir / "manifest.json").read_text(encoding="utf-8"))
             self.assertEqual(manifest_payload["overview"]["video_title"], "The Lion And The Mouse")
             self.assertEqual(manifest_payload["overview"]["video_description"], "狮子和老鼠学会互相帮助。")
+            self.assertEqual(manifest_payload["overview"]["difficulty"], "简单")
             self.assertIn("build-segments", manifest_payload["timings_seconds"])
             self.assertIn("generate-video-summary", manifest_payload["timings_seconds"])
 

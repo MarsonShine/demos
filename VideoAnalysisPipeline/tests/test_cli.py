@@ -82,6 +82,28 @@ class CliTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(process_batch_overview_mock.call_args.kwargs["output_root"], Path("E:\\tmp\\output"))
 
+    def test_batch_accepts_mod_final_output_argument(self) -> None:
+        config = _build_config_stub()
+        with patch("video_analysis_pipeline.cli.load_config", return_value=config), patch(
+            "video_analysis_pipeline.cli.process_batch",
+            return_value=[],
+        ) as process_batch_mock:
+            exit_code = main(
+                [
+                    "batch",
+                    "--input-root",
+                    "E:\\tmp\\input",
+                    "--output-root",
+                    "E:\\tmp\\output",
+                    "--final-output",
+                    "mod",
+                ]
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(process_batch_mock.call_args.kwargs["final_output"], "mod")
+        self.assertEqual(process_batch_mock.call_args.kwargs["workbook_output"], Path("E:\\tmp\\output") / "movie_dubbing.xlsx")
+
 
 if __name__ == "__main__":
     unittest.main()

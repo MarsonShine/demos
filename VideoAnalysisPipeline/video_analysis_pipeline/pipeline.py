@@ -71,6 +71,25 @@ class ExistingOutputItem:
     manifest: dict[str, Any]
 
 
+MOD_FINAL_OUTPUT = "mod"
+MOD_ITEM_ROOT_NAME = "dubbing"
+MOD_DEFAULT_WORKBOOK_NAME = "movie_dubbing.xlsx"
+MOD_REMOVABLE_FILENAMES = frozenset(
+    {
+        "batch_progress.json",
+        "batch_summary.json",
+        "dubbing.result.xlsx",
+        "manifest.json",
+        "progress.json",
+        "review.html",
+        "segments.csv",
+        "segments.json",
+        "subtitle_spans.json",
+    }
+)
+WORD_TOKEN_PATTERN = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?")
+
+
 def process_single_video(
     source_mp4: Path,
     output_dir: Path,
@@ -182,6 +201,7 @@ def process_single_video(
             audio_path=audio_path,
             cover_path=cover_path,
             video_description=video_description,
+            segments=segments,
             config=config,
         )
 
@@ -448,6 +468,45 @@ def _resolve_batch_output_dir(output_root: Path, relative_dir: Path) -> Path:
     return output_root / relative_dir
 
 
+def _resolve_final_batch_output_dir(
+    output_root: Path,
+    relative_dir: Path,
+    sequence_no: int,
+    final_output: str,
+) -> Path:
+    if final_output == MOD_FINAL_OUTPUT:
+        return output_root / MOD_ITEM_ROOT_NAME / str(sequence_no)
+    return _resolve_batch_output_dir(output_root, relative_dir)
+
+
+def _resolve_batch_workbook_output(
+    output_root: Path,
+    workbook_output: Path | None,
+    final_output: str,
+) -> Path | None:
+    if workbook_output is not None:
+        return workbook_output
+    if final_output == MOD_FINAL_OUTPUT:
+        return output_root / MOD_DEFAULT_WORKBOOK_NAME
+    return None
+
+
+def _cleanup_mod_output_artifacts(
+    output_root: Path,
+    item_dirs: list[Path],
+    protected_paths: list[Path | None],
+) -> None:
+    protected_resolved = {path.resolve() for path in protected_paths if path is not None and path.exists()}
+    for directory in [output_root, *item_dirs]:
+        for file_name in MOD_REMOVABLE_FILENAMES:
+            candidate = directory / file_name
+            if not candidate.exists() or not candidate.is_file():
+                continue
+            if candidate.resolve() in protected_resolved:
+                continue
+            candidate.unlink()
+
+
 def process_batch(
     input_root: Path,
     output_root: Path,
@@ -457,6 +516,7 @@ def process_batch(
     template_path: Path | None = None,
     workbook_output: Path | None = None,
     generate_overview: bool = True,
+    final_output: str = "standard",
 ) -> list[ProcessedItem]:
     discovered_inputs = discover_batch_inputs(
         input_root=input_root,
@@ -467,6 +527,7 @@ def process_batch(
     output_root.mkdir(parents=True, exist_ok=True)
     batch_progress_path = output_root / "batch_progress.json"
     batch_started_at = perf_counter()
+    actual_workbook_output = _resolve_batch_workbook_output(output_root, workbook_output, final_output)
     item_progress: dict[str, dict[str, Any]] = {}
 
     def write_batch_progress(current_item: str | None = None, current_stage: str | None = None, status: str = "running") -> None:
@@ -487,7 +548,12 @@ def process_batch(
 
     processed_items: list[ProcessedItem] = []
     for sequence_no, batch_item in enumerate(discovered_inputs, start=1):
-        output_dir = _resolve_batch_output_dir(output_root, batch_item.relative_dir)
+        output_dir = _resolve_final_batch_output_dir(
+            output_root=output_root,
+            relative_dir=batch_item.relative_dir,
+            sequence_no=sequence_no,
+            final_output=final_output,
+        )
         item_key = str(output_dir)
         item_progress[item_key] = {
             "sequence_no": sequence_no,
@@ -523,7 +589,7 @@ def process_batch(
         item_progress[item_key]["timings_seconds"] = processed_items[-1].timings or {}
         write_batch_progress(current_item=item_key, status="running")
 
-    if generate_overview and workbook_output is not None:
+    if generate_overview and actual_workbook_output is not None:
         all_rows = []
         overview_rows: list[OverviewRow] = []
         for item in processed_items:
@@ -531,7 +597,7 @@ def process_batch(
             if item.overview_row is not None:
                 overview_rows.append(item.overview_row)
         export_workbook(
-            output_path=workbook_output,
+            output_path=actual_workbook_output,
             rows=all_rows,
             overview_rows=overview_rows,
             template_path=template_path,
@@ -565,9 +631,17 @@ def process_batch(
             ],
             "elapsed_seconds": round(perf_counter() - batch_started_at, 3),
             "progress_json": str(batch_progress_path),
+            "workbook": str(actual_workbook_output) if actual_workbook_output is not None else None,
         },
     )
     write_batch_progress(status="completed")
+
+    if final_output == MOD_FINAL_OUTPUT:
+        _cleanup_mod_output_artifacts(
+            output_root=output_root,
+            item_dirs=[item.output_dir for item in processed_items],
+            protected_paths=[actual_workbook_output],
+        )
 
     return processed_items
 
@@ -607,6 +681,7 @@ def process_single_overview(
         audio_path=audio_path,
         cover_path=cover_path,
         video_description=video_description,
+        segments=existing_output.segments,
         config=config,
     )
     segment_rows = segments_to_rows(existing_output.segments)
@@ -1108,6 +1183,7 @@ def _build_overview_row(
     audio_path: Path,
     cover_path: Path,
     video_description: str,
+    segments: list[Segment],
     config: PipelineConfig,
 ) -> OverviewRow:
     return OverviewRow(
@@ -1121,8 +1197,45 @@ def _build_overview_row(
         background_audio=audio_path.name,
         cover_image=cover_path.name,
         video_description=video_description,
-        difficulty=config.overview.difficulty,
+        difficulty=config.overview.difficulty or _estimate_difficulty(segments),
         dialogue_audio=config.overview.dialogue_audio,
         topic=config.overview.topic,
         source=config.overview.source,
     )
+
+
+def _estimate_difficulty(segments: list[Segment]) -> str:
+    spoken_texts = [segment.text.strip() for segment in segments if segment.text.strip()]
+    if not spoken_texts:
+        return "简单"
+
+    words = [match.group(0).lower() for text in spoken_texts for match in WORD_TOKEN_PATTERN.finditer(text)]
+    if not words:
+        return "中等" if len(spoken_texts) >= 12 else "简单"
+
+    unique_words = len(set(words))
+    long_word_count = sum(1 for word in words if len(word) >= 8)
+    avg_words_per_segment = len(words) / len(spoken_texts)
+
+    score = 0
+    if len(spoken_texts) >= 18:
+        score += 2
+    elif len(spoken_texts) >= 10:
+        score += 1
+
+    if unique_words >= 80:
+        score += 2
+    elif unique_words >= 40:
+        score += 1
+
+    if long_word_count >= max(3, len(words) // 10):
+        score += 1
+
+    if avg_words_per_segment >= 9:
+        score += 1
+
+    if score >= 4:
+        return "较难"
+    if score >= 2:
+        return "中等"
+    return "简单"
