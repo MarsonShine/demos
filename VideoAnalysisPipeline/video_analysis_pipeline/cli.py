@@ -19,6 +19,59 @@ from video_analysis_pipeline.review_api import (
 )
 
 
+_SKIP_STEP_CHOICES = [
+    "source-video",
+    "cover",
+    "muted-video",
+    "background-audio",
+    "summary",
+    "workbook",
+    "review-page",
+    "csv",
+]
+
+_SKIP_STEP_TO_FIELD = {
+    "source-video": "export_source_video",
+    "cover": "export_cover",
+    "muted-video": "export_muted_video",
+    "background-audio": "export_background_audio",
+    "summary": "generate_summary",
+    "workbook": "export_workbook",
+    "review-page": "export_review_page",
+    "csv": "export_csv",
+}
+
+
+def add_skip_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--skip",
+        nargs="+",
+        choices=_SKIP_STEP_CHOICES,
+        metavar="STEP",
+        default=None,
+        help=(
+            "Skip one or more pipeline steps. "
+            f"Valid steps: {', '.join(_SKIP_STEP_CHOICES)}. "
+            "Example: --skip cover summary workbook"
+        ),
+    )
+
+
+def add_export_size_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--video-target-size-ratio",
+        type=float,
+        default=None,
+        help="Optional compression ratio (0 < ratio <= 1) for exported 02.mp4 relative to source size. The pipeline derives a video bitrate from source file size and duration.",
+    )
+    parser.add_argument(
+        "--audio-target-size-ratio",
+        type=float,
+        default=None,
+        help="Optional compression ratio (0 < ratio <= 1) for exported 03.mp3 relative to source size. The pipeline derives an MP3 bitrate from source file size and duration.",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="video-analysis-pipeline",
@@ -36,6 +89,8 @@ def build_parser() -> argparse.ArgumentParser:
     single_parser.add_argument("--sequence-no", type=int, default=1, help="Sequence number written into exported rows.")
     single_parser.add_argument("--language", type=str, default=None, help="Override ASR language, for example en or en-US.")
     single_parser.add_argument("--asr-provider", type=str, default=None, help="Override ASR provider, for example faster-whisper or azure-speech.")
+    add_export_size_args(single_parser)
+    add_skip_args(single_parser)
 
     single_segments_parser = subparsers.add_parser(
         "single-segments",
@@ -48,6 +103,8 @@ def build_parser() -> argparse.ArgumentParser:
     single_segments_parser.add_argument("--sequence-no", type=int, default=1, help="Sequence number written into exported rows.")
     single_segments_parser.add_argument("--language", type=str, default=None, help="Override ASR language, for example en or en-US.")
     single_segments_parser.add_argument("--asr-provider", type=str, default=None, help="Override ASR provider, for example faster-whisper or azure-speech.")
+    add_export_size_args(single_segments_parser)
+    add_skip_args(single_segments_parser)
 
     single_overview_parser = subparsers.add_parser(
         "single-overview",
@@ -78,6 +135,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     batch_parser.add_argument("--language", type=str, default=None, help="Override ASR language, for example en or en-US.")
     batch_parser.add_argument("--asr-provider", type=str, default=None, help="Override ASR provider, for example faster-whisper or azure-speech.")
+    add_export_size_args(batch_parser)
+    add_skip_args(batch_parser)
 
     batch_segments_parser = subparsers.add_parser(
         "batch-segments",
@@ -90,6 +149,8 @@ def build_parser() -> argparse.ArgumentParser:
     batch_segments_parser.add_argument("--srt-name", type=str, default=None, help="Optional filter: only process folders whose single SRT matches this filename.")
     batch_segments_parser.add_argument("--language", type=str, default=None, help="Override ASR language, for example en or en-US.")
     batch_segments_parser.add_argument("--asr-provider", type=str, default=None, help="Override ASR provider, for example faster-whisper or azure-speech.")
+    add_export_size_args(batch_segments_parser)
+    add_skip_args(batch_segments_parser)
 
     batch_overview_parser = subparsers.add_parser(
         "batch-overview",
@@ -159,6 +220,16 @@ def main(argv: list[str] | None = None) -> int:
         if language:
             config.azure_speech.language = language
             config.faster_whisper.language = language
+        video_target_size_ratio = getattr(args, "video_target_size_ratio", None)
+        if video_target_size_ratio is not None:
+            config.video.target_size_ratio = video_target_size_ratio
+        audio_target_size_ratio = getattr(args, "audio_target_size_ratio", None)
+        if audio_target_size_ratio is not None:
+            config.audio.target_size_ratio = audio_target_size_ratio
+        skip_steps = getattr(args, "skip", None)
+        if skip_steps:
+            for step in skip_steps:
+                setattr(config.steps, _SKIP_STEP_TO_FIELD[step], False)
         template_path = resolve_template_path(getattr(args, "template", None))
 
         if args.command == "single":

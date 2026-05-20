@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -125,6 +125,7 @@ class AudioConfig:
     demucs_model: str = "htdemucs"
     demucs_device: str = "cpu"
     mp3_bitrate_kbps: int = 192
+    target_size_ratio: float = 0.0
     jobs: int = 0
     cache_enabled: bool = True
     cache_dir: str = ".video_pipeline_cache\\bgm"
@@ -138,10 +139,37 @@ class AudioConfig:
             raise ValueError("audio demucs_device must not be empty.")
         if self.mp3_bitrate_kbps < 32:
             raise ValueError("audio mp3_bitrate_kbps must be at least 32.")
+        if self.target_size_ratio < 0:
+            raise ValueError("audio target_size_ratio must be >= 0.")
         if self.jobs < 0:
             raise ValueError("audio jobs must be >= 0.")
         if not self.cache_dir:
             raise ValueError("audio cache_dir must not be empty.")
+
+
+@dataclass(slots=True)
+class VideoOutputConfig:
+    target_size_ratio: float = 0.0
+    audio_bitrate_kbps: int = 128
+
+    def validate(self) -> None:
+        if self.target_size_ratio < 0:
+            raise ValueError("video target_size_ratio must be >= 0.")
+        if self.audio_bitrate_kbps < 32:
+            raise ValueError("video audio_bitrate_kbps must be at least 32.")
+
+
+@dataclass(slots=True)
+class StepsConfig:
+    """Toggle individual pipeline steps on or off."""
+    export_source_video: bool = True
+    export_cover: bool = True
+    export_muted_video: bool = True
+    export_background_audio: bool = True
+    generate_summary: bool = True
+    export_workbook: bool = True
+    export_review_page: bool = True
+    export_csv: bool = True
 
 
 @dataclass(slots=True)
@@ -205,10 +233,12 @@ class PipelineConfig:
     azure_speech: AzureSpeechConfig
     faster_whisper: FasterWhisperConfig
     subtitle: SubtitleConfig
+    video: VideoOutputConfig
     audio: AudioConfig
     azure_openai: AzureOpenAIConfig
     overview: OverviewConfig
     segmentation: SegmentationConfig
+    steps: StepsConfig = field(default_factory=StepsConfig)
 
 
 def load_config(path: Path) -> PipelineConfig:
@@ -224,10 +254,12 @@ def load_config(path: Path) -> PipelineConfig:
     azure_data = dict(data.get("azure_speech", {}))
     faster_whisper_data = dict(data.get("faster_whisper", {}))
     subtitle_data = dict(data.get("subtitle", {}))
+    video_data = dict(data.get("video", {}))
     audio_data = dict(data.get("audio", {}))
     azure_openai_data = dict(data.get("azure_openai", {}))
     overview_data = dict(data.get("overview", {}))
     segmentation_data = dict(data.get("segmentation", {}))
+    steps_data = dict(data.get("steps", {}))
 
     env_provider = os.getenv("ASR_PROVIDER")
     env_key = os.getenv("AZURE_SPEECH_KEY")
@@ -323,11 +355,17 @@ def load_config(path: Path) -> PipelineConfig:
         allow_asr_fallback=bool(subtitle_data.get("allow_asr_fallback", True)),
     )
 
+    video_config = VideoOutputConfig(
+        target_size_ratio=float(video_data.get("target_size_ratio", 0.0)),
+        audio_bitrate_kbps=int(video_data.get("audio_bitrate_kbps", 128)),
+    )
+
     audio_config = AudioConfig(
         method=str(audio_data.get("method", "demucs")),
         demucs_model=str(audio_data.get("demucs_model", "htdemucs")),
         demucs_device=str(audio_data.get("demucs_device", "cpu")),
         mp3_bitrate_kbps=int(audio_data.get("mp3_bitrate_kbps", 192)),
+        target_size_ratio=float(audio_data.get("target_size_ratio", 0.0)),
         jobs=int(audio_data.get("jobs", 0)),
         cache_enabled=bool(audio_data.get("cache_enabled", True)),
         cache_dir=str(audio_data.get("cache_dir", ".video_pipeline_cache\\bgm")),
@@ -363,13 +401,26 @@ def load_config(path: Path) -> PipelineConfig:
         max_boundary_shift_ms=int(segmentation_data.get("max_boundary_shift_ms", 800)),
     )
 
+    steps_config = StepsConfig(
+        export_source_video=bool(steps_data.get("export_source_video", True)),
+        export_cover=bool(steps_data.get("export_cover", True)),
+        export_muted_video=bool(steps_data.get("export_muted_video", True)),
+        export_background_audio=bool(steps_data.get("export_background_audio", True)),
+        generate_summary=bool(steps_data.get("generate_summary", True)),
+        export_workbook=bool(steps_data.get("export_workbook", True)),
+        export_review_page=bool(steps_data.get("export_review_page", True)),
+        export_csv=bool(steps_data.get("export_csv", True)),
+    )
+
     return PipelineConfig(
         asr=asr_config,
         azure_speech=azure_config,
         faster_whisper=faster_whisper_config,
         subtitle=subtitle_config,
+        video=video_config,
         audio=audio_config,
         azure_openai=azure_openai_config,
         overview=overview_config,
         segmentation=segmentation_config,
+        steps=steps_config,
     )

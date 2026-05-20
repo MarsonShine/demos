@@ -14,6 +14,7 @@ from video_analysis_pipeline.models import OverviewRow, Segment, SubtitleSpan, T
 from video_analysis_pipeline.pipeline import (
     ProcessedItem,
     _build_leading_title_segment,
+    _estimate_difficulty,
     _normalize_segment_order,
     discover_batch_inputs,
     process_batch,
@@ -335,18 +336,61 @@ class PipelineTests(unittest.TestCase):
             workbook = load_workbook(result.workbook_path)
             self.assertEqual(workbook.worksheets[0].cell(row=2, column=4).value, "The Lion And The Mouse")
             self.assertEqual(workbook.worksheets[0].cell(row=2, column=10).value, "狮子和老鼠学会互相帮助。")
-            self.assertEqual(workbook.worksheets[0].cell(row=2, column=11).value, "简单")
+            self.assertEqual(workbook.worksheets[0].cell(row=2, column=11).value, "1")
             self.assertEqual(workbook.worksheets[1].cell(row=2, column=3).value, "The lion roars loudly.")
 
             manifest_payload = json.loads((output_dir / "manifest.json").read_text(encoding="utf-8"))
             self.assertEqual(manifest_payload["overview"]["video_title"], "The Lion And The Mouse")
             self.assertEqual(manifest_payload["overview"]["video_description"], "狮子和老鼠学会互相帮助。")
-            self.assertEqual(manifest_payload["overview"]["difficulty"], "简单")
+            self.assertEqual(manifest_payload["overview"]["difficulty"], "1")
             self.assertIn("build-segments", manifest_payload["timings_seconds"])
             self.assertIn("generate-video-summary", manifest_payload["timings_seconds"])
 
             segments_payload = json.loads((output_dir / "segments.json").read_text(encoding="utf-8"))
             self.assertEqual(segments_payload["overview"]["movie_name"], "The Lion And The Mouse")
+
+    def test_estimate_difficulty_scores_subtitle_complexity_on_1_to_5_scale(self) -> None:
+        simple_spans = [
+            SubtitleSpan(
+                text="The lion roars loudly.",
+                normalized_text="the lion roars loudly",
+                start_ms=0,
+                end_ms=1_000,
+                confidence=1.0,
+                frame_count=1,
+                source="srt",
+                raw_index=1,
+            )
+        ]
+        complex_spans = [
+            SubtitleSpan(
+                text="Although the adventurous children were whispering nervously, they still decided to investigate the mysterious footprints because the strangely illuminated forest seemed unexpectedly welcoming.",
+                normalized_text="although the adventurous children were whispering nervously they still decided to investigate the mysterious footprints because the strangely illuminated forest seemed unexpectedly welcoming",
+                start_ms=0,
+                end_ms=4_000,
+                confidence=1.0,
+                frame_count=1,
+                source="srt",
+                raw_index=1,
+            ),
+            SubtitleSpan(
+                text="When the conversation becomes more complicated, the sentences contain subordinate clauses, unusual vocabulary, and longer descriptive phrases.",
+                normalized_text="when the conversation becomes more complicated the sentences contain subordinate clauses unusual vocabulary and longer descriptive phrases",
+                start_ms=4_000,
+                end_ms=8_000,
+                confidence=1.0,
+                frame_count=1,
+                source="srt",
+                raw_index=2,
+            ),
+        ]
+
+        simple_difficulty = _estimate_difficulty(simple_spans, [])
+        complex_difficulty = _estimate_difficulty(complex_spans, [])
+
+        self.assertEqual(simple_difficulty, "1")
+        self.assertGreaterEqual(int(complex_difficulty), 4)
+        self.assertLessEqual(int(complex_difficulty), 5)
 
     def test_normalize_segment_order_sorts_by_time_and_renumbers(self) -> None:
         segments = [

@@ -13,6 +13,7 @@ from video_analysis_pipeline.config import (
     PipelineConfig,
     SegmentationConfig,
     SubtitleConfig,
+    VideoOutputConfig,
 )
 from video_analysis_pipeline.faster_whisper_asr import FasterWhisperTranscriber, normalize_whisper_language
 
@@ -28,6 +29,7 @@ class AsrFactoryTests(unittest.TestCase):
             ),
             faster_whisper=FasterWhisperConfig(),
             subtitle=SubtitleConfig(),
+            video=VideoOutputConfig(),
             audio=AudioConfig(),
             azure_openai=AzureOpenAIConfig(endpoint="https://example.openai.azure.com", api_key="key"),
             overview=OverviewConfig(),

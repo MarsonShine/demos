@@ -17,6 +17,9 @@ This tool takes a source MP4 and optional SRT file, then generates:
 - review.html             static review page for click-to-seek playback
 - progress.json           per-item progress and module timings
 
+`02.mp4` and `03.mp3` also support target-size export controls.
+When a target size is configured, the pipeline derives a bitrate from media duration instead of using the default copy/fixed-bitrate behavior.
+
 
 1. Prerequisites
 ----------------
@@ -62,11 +65,17 @@ Relevant config in `pipeline_config.json`:
 
 Background-music output config:
 
+    "video": {
+      "target_size_kb": 0,
+      "audio_bitrate_kbps": 128
+    }
+
     "audio": {
       "method": "demucs",
       "demucs_model": "htdemucs",
       "demucs_device": "cpu",
       "mp3_bitrate_kbps": 192,
+      "target_size_kb": 0,
       "cache_enabled": true,
       "cache_dir": ".video_pipeline_cache\\bgm"
     }
@@ -74,6 +83,8 @@ Background-music output config:
 The pipeline still extracts a temporary full-mix analysis track for ASR and silence detection.
 The persisted `03.mp3` file is now the accompaniment/BGM track.
 When the same source video is reprocessed with the same audio settings, the pipeline reuses the cached BGM stem instead of rerunning Demucs.
+If `video.target_size_kb` is greater than 0, `02.mp4` is transcoded to fit that size budget and uses `video.audio_bitrate_kbps` for the embedded AAC audio track.
+If `audio.target_size_kb` is greater than 0, `03.mp3` derives its MP3 bitrate from duration and the target size.
 
 You can also override from the command line:
 
@@ -139,7 +150,7 @@ Or set environment variables:
 
 The pipeline calls Azure OpenAI once per video, using the full subtitle corpus to generate one concise Chinese overview.
 It does not call the model per segment.
-When `overview.difficulty` is empty in config, the pipeline auto-estimates difficulty from segment count and word complexity (`简单` / `中等` / `较难`).
+When `overview.difficulty` is empty in config, the pipeline auto-estimates subtitle difficulty on a numeric `1-5` scale using sentence length, clause density, and word complexity.
 
 
 3. Single-file Workflow
@@ -153,6 +164,15 @@ Always wrap Windows paths containing spaces or apostrophes in double quotes:
       --source-mp4 "C:\video-analysis\input\job-001\02.mp4" `
       --source-srt "C:\video-analysis\input\job-001\episode 01's intro.srt" `
       --output-dir "C:\video-analysis\output\job-001_review"
+
+Target-size export example:
+
+    py run_pipeline.py single `
+      --source-mp4 "C:\video-analysis\input\job-001\02.mp4" `
+      --source-srt "C:\video-analysis\input\job-001\02.srt" `
+      --output-dir "C:\video-analysis\output\job-001_review" `
+      --video-target-size-kb 9149 `
+      --audio-target-size-kb 955
 
 3.2 Auto-discover sidecar SRT
 
@@ -219,6 +239,14 @@ MOD final-output run:
       --output-root "C:\video-analysis\output_batch" `
       --final-output mod
 
+Target-size export run:
+
+    py run_pipeline.py batch `
+      --input-root "C:\video-analysis\input" `
+      --output-root "C:\video-analysis\output_batch" `
+      --video-target-size-kb 9149 `
+      --audio-target-size-kb 955
+
 Output tree:
 
     C:\video-analysis\output_batch
@@ -261,6 +289,8 @@ Optional filters:
 - `--source-name 02.mp4` only processes folders whose single MP4 has that filename
 - `--srt-name 02.srt` only processes folders whose single SRT has that filename
 - `--final-output mod` switches final packaging to MOD layout (`movie_dubbing.xlsx` + `dubbing/<sequence_no>`)
+- `--video-target-size-kb 9149` derives a video bitrate budget for exported `02.mp4`
+- `--audio-target-size-kb 955` derives an MP3 bitrate budget for exported `03.mp3`
 
 4.1 Batch segment-only mode
 
@@ -283,7 +313,61 @@ This refreshes each child folder's `dubbing.result.xlsx`, then rebuilds the merg
 For command compatibility with normal batch mode, `batch-overview` also accepts `--input-root`, but the overview rebuild only reads existing generated outputs from `--output-root`.
 
 
-5. How Alignment Works
+5. Step-Skip Configuration
+--------------------------
+
+Steps can be skipped in two ways:
+
+A) Via CLI flag `--skip` (supported by `single`, `single-segments`, `batch`, `batch-segments`):
+
+    py run_pipeline.py single `
+      --source-mp4 "C:\video-analysis\input\job-001\02.mp4" `
+      --output-dir "C:\video-analysis\output\job-001" `
+      --skip cover summary workbook
+
+    py run_pipeline.py batch `
+      --input-root "C:\video-analysis\input" `
+      --output-root "C:\video-analysis\output_batch" `
+      --skip muted-video background-audio csv
+
+Valid step names for `--skip`:
+
+    source-video      copy/transcode source → 02.mp4
+    cover             extract first frame   → 01.jpg
+    muted-video       strip audio           → 01.mp4
+    background-audio  run Demucs BGM sep.   → 03.mp3
+    summary           call Azure OpenAI for summary text
+    workbook          write dubbing.result.xlsx
+    review-page       write review.html
+    csv               write segments.csv
+
+B) Via `pipeline_config.json` under the `steps` key:
+All steps default to `true`.  Set any key to `false` to skip that step.
+
+    "steps": {
+      "export_source_video":    true,   // copy/transcode source → 02.mp4
+      "export_cover":           true,   // extract first frame  → 01.jpg
+      "export_muted_video":     true,   // strip audio          → 01.mp4
+      "export_background_audio": true,  // run Demucs BGM sep.  → 03.mp3
+      "generate_summary":       true,   // call Azure OpenAI for summary text
+      "export_workbook":        true,   // write dubbing.result.xlsx
+      "export_review_page":     true,   // write review.html
+      "export_csv":             true    // write segments.csv
+    }
+
+CLI flags override the config file for the same run.
+
+Notes:
+- Skipping `source-video` means `02.mp4` is not written; the source file is used
+  in-place for all downstream metadata reads.
+- Skipping `background-audio` means `03.mp3` is not written; the temporary
+  full-mix analysis audio is used instead for metadata.
+- Skipping `summary` sets the description field to an empty string in the workbook.
+- Skipping `workbook` returns no workbook path; batch merged workbooks are also
+  omitted unless at least one item produces a workbook.
+
+
+6. How Alignment Works
 ----------------------
 
 - SRT provides the segment text and rough subtitle timing.
@@ -293,7 +377,7 @@ For command compatibility with normal batch mode, `batch-overview` also accepts 
 - Leading SRT boilerplate such as `AI 生成` is removed automatically before alignment.
 
 
-6. Review Page
+7. Review Page
 --------------
 
 Each output folder contains:
@@ -317,7 +401,7 @@ Typical abnormal flags:
 - targeted_subtitle_timing_repair
 
 
-7. Important Notes
+8. Important Notes
 ------------------
 
 - If `dubbing.result.xlsx` is open in Excel, the tool cannot overwrite it.
@@ -328,9 +412,11 @@ Typical abnormal flags:
 - `progress.json` and `batch_progress.json` record the current stage and per-module timings while the pipeline runs.
 - Workbook sheet 1 is generated automatically from the produced assets, fixed overview metadata, and the Azure OpenAI summary.
 - In `batch --final-output mod`, intermediate files are cleaned after packaging, including `batch_progress.json`, `batch_summary.json`, `manifest.json`, `progress.json`, `review.html`, `segments.csv`, `segments.json`, and `subtitle_spans.json`.
+- Target-size export works from media duration, so actual file size is guided by the requested KB budget rather than byte-for-byte guaranteed.
+- If `overview.difficulty` is set in config, that explicit value overrides the automatic `1-5` subtitle-complexity score.
 
 
-8. Recommended Production Strategy
+9. Recommended Production Strategy
 ----------------------------------
 
 Best quality:

@@ -25,6 +25,10 @@ Python pipeline for dubbing-prep asset generation.
    - root workbook: `movie_dubbing.xlsx`
    - item folders: `dubbing/<sequence_no>`
    - remove intermediate JSON/HTML/CSV files after packaging
+8. Support target-size export controls for generated assets:
+   - `02.mp4` can be transcoded to a target size in KB
+   - `03.mp3` can derive its MP3 bitrate from a target size in KB
+9. When `overview.difficulty` is left blank, sheet-1 difficulty is auto-scored from subtitle complexity on a `1-6` scale.
 
 ## Execution modes
 
@@ -34,6 +38,7 @@ The default commands keep the full automated pipeline:
 py run_pipeline.py single --source-mp4 <mp4> --output-dir <output>
 py run_pipeline.py batch --input-root <input> --output-root <output>
 py run_pipeline.py batch --input-root <input> --output-root <output> --final-output mod
+py run_pipeline.py batch --input-root <input> --output-root <output> --video-target-size-kb 9149 --audio-target-size-kb 955
 ```
 
 You can now split the workflow when you do **not** want to rerun everything:
@@ -49,6 +54,8 @@ py run_pipeline.py batch-overview --output-root <existing-output-root>
 - `single-overview` / `batch-overview`: rebuild the overview workbook from existing outputs without rerunning segmentation, ASR, or BGM extraction.
 - `batch-overview` also accepts `--input-root` for command-line compatibility with the normal `batch` form, but it only reads existing outputs from `--output-root`.
 - `batch --final-output mod`: emit MOD-ready assets under `dubbing/<sequence_no>`, write root workbook `movie_dubbing.xlsx`, and clean intermediate artifacts.
+- `--video-target-size-kb`: derive a target video bitrate for exported `02.mp4` from the requested size.
+- `--audio-target-size-kb`: derive a target MP3 bitrate for exported `03.mp3` from the requested size.
 
 ## Azure OpenAI overview
 

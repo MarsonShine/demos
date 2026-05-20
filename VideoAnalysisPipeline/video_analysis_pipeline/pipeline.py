@@ -88,6 +88,10 @@ MOD_REMOVABLE_FILENAMES = frozenset(
     }
 )
 WORD_TOKEN_PATTERN = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?")
+CLAUSE_MARKER_PATTERN = re.compile(
+    r"[,:;]|\b(?:because|although|unless|however|while|which|who|that|if|when|before|after|until|since|though|whereas|meanwhile|instead|therefore)\b",
+    re.IGNORECASE,
+)
 
 
 def process_single_video(
@@ -107,25 +111,42 @@ def process_single_video(
 
     active_transcriber = transcriber or create_transcriber(config)
     asr_provider = normalize_asr_provider(config.asr.provider)
+    steps = config.steps
 
     output_dir.mkdir(parents=True, exist_ok=True)
     progress_path = output_dir / "progress.json"
     progress_tracker = StageProgressTracker(progress_path=progress_path, label=output_dir.name, callback=progress_callback)
 
-    source_asset = progress_tracker.run(
-        "copy-source-video",
-        lambda: copy_source_video(source_mp4, output_dir / "02.mp4"),
-    )
-    cover_path = progress_tracker.run(
-        "extract-cover",
-        lambda: extract_cover(source_asset, output_dir / "01.jpg"),
-    )
-    muted_video_path = progress_tracker.run(
-        "extract-muted-video",
-        lambda: extract_muted_video(source_asset, output_dir / "01.mp4"),
-    )
+    if steps.export_source_video:
+        source_asset = progress_tracker.run(
+            "copy-source-video",
+            lambda: copy_source_video(source_mp4, output_dir / "02.mp4", config.video),
+        )
+    else:
+        source_asset = source_mp4
+
+    if steps.export_cover:
+        cover_path = progress_tracker.run(
+            "extract-cover",
+            lambda: extract_cover(source_asset, output_dir / "01.jpg"),
+        )
+    else:
+        cover_path = output_dir / "01.jpg"
+
+    if steps.export_muted_video:
+        muted_video_path = progress_tracker.run(
+            "extract-muted-video",
+            lambda: extract_muted_video(source_asset, output_dir / "01.mp4"),
+        )
+    else:
+        muted_video_path = output_dir / "01.mp4"
+
     source_metadata = progress_tracker.run("probe-source-media", lambda: probe_media(source_asset))
-    muted_metadata = progress_tracker.run("probe-muted-video", lambda: probe_media(muted_video_path))
+
+    if steps.export_muted_video:
+        muted_metadata = progress_tracker.run("probe-muted-video", lambda: probe_media(muted_video_path))
+    else:
+        muted_metadata = source_metadata
 
     with tempfile.TemporaryDirectory(prefix="video-analysis-audio-") as temp_dir:
         analysis_audio_path = progress_tracker.run(
@@ -133,17 +154,23 @@ def process_single_video(
             lambda: extract_audio_mp3(source_asset, Path(temp_dir) / "analysis.mp3"),
         )
         source_cache_key_material = _build_audio_cache_key_material(source_asset)
-        background_audio_result = progress_tracker.run(
-            "extract-bgm",
-            lambda: extract_background_audio_mp3(
-                analysis_audio_path,
-                output_dir / "03.mp3",
-                config.audio,
-                cache_key_material=source_cache_key_material,
-            ),
-        )
+        if steps.export_background_audio:
+            background_audio_result = progress_tracker.run(
+                "extract-bgm",
+                lambda: extract_background_audio_mp3(
+                    analysis_audio_path,
+                    output_dir / "03.mp3",
+                    config.audio,
+                    cache_key_material=source_cache_key_material,
+                ),
+            )
+        else:
+            background_audio_result = BackgroundAudioResult(path=output_dir / "03.mp3", from_cache=False, cache_path=None)
         analysis_audio_metadata = progress_tracker.run("probe-analysis-audio", lambda: probe_media(analysis_audio_path))
-        audio_metadata = progress_tracker.run("probe-bgm-audio", lambda: probe_media(background_audio_result.path))
+        if steps.export_background_audio:
+            audio_metadata = progress_tracker.run("probe-bgm-audio", lambda: probe_media(background_audio_result.path))
+        else:
+            audio_metadata = analysis_audio_metadata
         silence_ranges, non_silent_ranges = progress_tracker.run(
             "detect-silence",
             lambda: detect_silence(
@@ -184,15 +211,18 @@ def process_single_video(
     overview_row: OverviewRow | None = None
     if generate_overview:
         display_title = _derive_display_title(source_mp4)
-        video_description = progress_tracker.run(
-            "generate-video-summary",
-            lambda: generate_video_summary(
-                title=display_title,
-                text_blocks=_summary_text_blocks(subtitle_spans, segments),
-                config=config.azure_openai,
-            ),
-            details={"deployment": config.azure_openai.deployment},
-        )
+        if steps.generate_summary:
+            video_description = progress_tracker.run(
+                "generate-video-summary",
+                lambda: generate_video_summary(
+                    title=display_title,
+                    text_blocks=_summary_text_blocks(subtitle_spans, segments),
+                    config=config.azure_openai,
+                ),
+                details={"deployment": config.azure_openai.deployment},
+            )
+        else:
+            video_description = ""
         overview_row = _build_overview_row(
             sequence_no=sequence_no,
             title=display_title,
@@ -201,6 +231,7 @@ def process_single_video(
             audio_path=audio_path,
             cover_path=cover_path,
             video_description=video_description,
+            subtitle_spans=subtitle_spans,
             segments=segments,
             config=config,
         )
@@ -232,6 +263,9 @@ def process_single_video(
             segments=segments,
             segment_rows=segment_rows,
             overview_row=overview_row,
+            write_workbook=steps.export_workbook,
+            write_review_page=steps.export_review_page,
+            write_csv=steps.export_csv,
         ),
     )
 
@@ -681,6 +715,7 @@ def process_single_overview(
         audio_path=audio_path,
         cover_path=cover_path,
         video_description=video_description,
+        subtitle_spans=existing_output.subtitle_spans,
         segments=existing_output.segments,
         config=config,
     )
@@ -911,6 +946,9 @@ def _write_output_artifacts(
     segments: list[Segment],
     segment_rows: list[tuple[int, int, str, str, str]],
     overview_row: OverviewRow | None,
+    write_workbook: bool = True,
+    write_review_page: bool = True,
+    write_csv: bool = True,
 ) -> Path | None:
     write_json(
         subtitle_spans_path,
@@ -945,15 +983,17 @@ def _write_output_artifacts(
             "overview": overview_row.to_json() if overview_row is not None else None,
         },
     )
-    export_csv(output_path=segments_csv_path, rows=segment_rows)
-    export_review_page(
-        output_path=review_page_path,
-        video_path="02.mp4",
-        segments=segments,
-        title=f"Sequence {sequence_no} review",
-    )
+    if write_csv:
+        export_csv(output_path=segments_csv_path, rows=segment_rows)
+    if write_review_page:
+        export_review_page(
+            output_path=review_page_path,
+            video_path="02.mp4",
+            segments=segments,
+            title=f"Sequence {sequence_no} review",
+        )
 
-    if workbook_output is None or overview_row is None:
+    if workbook_output is None or overview_row is None or not write_workbook:
         return None
     return export_workbook(
         output_path=workbook_output,
@@ -1183,6 +1223,7 @@ def _build_overview_row(
     audio_path: Path,
     cover_path: Path,
     video_description: str,
+    subtitle_spans: list[SubtitleSpan],
     segments: list[Segment],
     config: PipelineConfig,
 ) -> OverviewRow:
@@ -1197,45 +1238,51 @@ def _build_overview_row(
         background_audio=audio_path.name,
         cover_image=cover_path.name,
         video_description=video_description,
-        difficulty=config.overview.difficulty or _estimate_difficulty(segments),
+        difficulty=config.overview.difficulty or _estimate_difficulty(subtitle_spans, segments),
         dialogue_audio=config.overview.dialogue_audio,
         topic=config.overview.topic,
         source=config.overview.source,
     )
 
 
-def _estimate_difficulty(segments: list[Segment]) -> str:
-    spoken_texts = [segment.text.strip() for segment in segments if segment.text.strip()]
-    if not spoken_texts:
-        return "简单"
+def _estimate_difficulty(subtitle_spans: list[SubtitleSpan], segments: list[Segment]) -> str:
+    text_blocks = [span.text.strip() for span in subtitle_spans if span.text.strip()]
+    if not text_blocks:
+        text_blocks = [segment.text.strip() for segment in segments if segment.text.strip()]
+    if not text_blocks:
+        return "1"
 
-    words = [match.group(0).lower() for text in spoken_texts for match in WORD_TOKEN_PATTERN.finditer(text)]
-    if not words:
-        return "中等" if len(spoken_texts) >= 12 else "简单"
+    words: list[str] = []
+    word_counts: list[int] = []
+    clause_markers = 0
+    for text in text_blocks:
+        matched_words = [match.group(0).lower() for match in WORD_TOKEN_PATTERN.finditer(text)]
+        if not matched_words:
+            continue
+        words.extend(matched_words)
+        word_counts.append(len(matched_words))
+        clause_markers += len(CLAUSE_MARKER_PATTERN.findall(text))
 
-    unique_words = len(set(words))
-    long_word_count = sum(1 for word in words if len(word) >= 8)
-    avg_words_per_segment = len(words) / len(spoken_texts)
+    if not words or not word_counts:
+        return "1"
 
-    score = 0
-    if len(spoken_texts) >= 18:
-        score += 2
-    elif len(spoken_texts) >= 10:
-        score += 1
+    total_words = len(words)
+    avg_words_per_sentence = total_words / len(word_counts)
+    max_words_per_sentence = max(word_counts)
+    avg_word_length = sum(len(word) for word in words) / total_words
+    long_word_ratio = sum(1 for word in words if len(word) >= 8) / total_words
+    very_long_word_ratio = sum(1 for word in words if len(word) >= 11) / total_words
+    lexical_diversity = len(set(words)) / total_words
+    lexical_diversity_weight = min(1.0, total_words / 50)
+    clause_density = clause_markers / len(word_counts)
 
-    if unique_words >= 80:
-        score += 2
-    elif unique_words >= 40:
-        score += 1
+    score = 1.0
+    score += min(1.8, max(0.0, (avg_words_per_sentence - 5.0) / 6.0) * 1.8)
+    score += min(1.0, max(0.0, (max_words_per_sentence - 9.0) / 8.0) * 1.0)
+    score += min(0.8, max(0.0, (avg_word_length - 5.0) / 2.0) * 0.8)
+    score += min(1.0, max(0.0, (long_word_ratio - 0.08) / 0.17) * 1.0)
+    score += min(0.7, max(0.0, (very_long_word_ratio - 0.02) / 0.08) * 0.7)
+    score += min(1.0, max(0.0, (clause_density - 0.25) / 1.25) * 1.0)
+    score += min(0.7, max(0.0, (lexical_diversity - 0.55) / 0.25) * 0.7 * lexical_diversity_weight)
 
-    if long_word_count >= max(3, len(words) // 10):
-        score += 1
-
-    if avg_words_per_segment >= 9:
-        score += 1
-
-    if score >= 4:
-        return "较难"
-    if score >= 2:
-        return "中等"
-    return "简单"
+    return str(max(1, min(5, int(round(score)))))

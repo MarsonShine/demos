@@ -12,7 +12,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from video_analysis_pipeline.config import AudioConfig
+from video_analysis_pipeline.config import AudioConfig, VideoOutputConfig
 from video_analysis_pipeline.models import MediaMetadata, TimeRange
 from video_analysis_pipeline.timecode import seconds_to_milliseconds
 
@@ -21,6 +21,9 @@ SILENCE_START_PATTERN = re.compile(r"silence_start:\s*(?P<seconds>\d+(?:\.\d+)?)
 SILENCE_END_PATTERN = re.compile(
     r"silence_end:\s*(?P<seconds>\d+(?:\.\d+)?)\s*\|\s*silence_duration:\s*(?P<duration>\d+(?:\.\d+)?)"
 )
+TARGET_SIZE_SAFETY_RATIO = 0.985
+MIN_AUDIO_BITRATE_KBPS = 32
+MIN_VIDEO_BITRATE_KBPS = 64
 
 
 @dataclass(slots=True)
@@ -85,8 +88,106 @@ def run_command(args: list[str]) -> subprocess.CompletedProcess[str]:
     return completed
 
 
-def copy_source_video(source_path: Path, target_path: Path) -> Path:
+def _calculate_target_bitrate_kbps(
+    target_size_kb: int,
+    duration_ms: int,
+    minimum_kbps: int,
+    label: str,
+) -> int:
+    if target_size_kb <= 0:
+        raise ValueError(f"{label} target_size_kb must be greater than 0 to derive bitrate.")
+    if duration_ms <= 0:
+        raise ValueError(f"{label} duration must be greater than 0 to derive bitrate.")
+
+    bitrate_kbps = int((target_size_kb * 8192 * TARGET_SIZE_SAFETY_RATIO) / duration_ms)
+    if bitrate_kbps < minimum_kbps:
+        raise ValueError(
+            f"{label} target_size_kb={target_size_kb} is too small for duration {duration_ms}ms. "
+            f"Required bitrate would fall below {minimum_kbps} kbps."
+        )
+    return bitrate_kbps
+
+
+def _resolve_background_audio_bitrate_kbps(config: AudioConfig, source_size_kb: float, duration_ms: int) -> int:
+    if config.target_size_ratio > 0:
+        target_size_kb = round(source_size_kb * config.target_size_ratio)
+        return _calculate_target_bitrate_kbps(
+            target_size_kb=target_size_kb,
+            duration_ms=duration_ms,
+            minimum_kbps=MIN_AUDIO_BITRATE_KBPS,
+            label="audio",
+        )
+    return config.mp3_bitrate_kbps
+
+
+def _resolve_video_export_bitrates_kbps(config: VideoOutputConfig, metadata: MediaMetadata, target_size_kb: int) -> tuple[int, int]:
+    total_bitrate_kbps = _calculate_target_bitrate_kbps(
+        target_size_kb=target_size_kb,
+        duration_ms=metadata.duration_ms,
+        minimum_kbps=1,
+        label="video",
+    )
+
+    if metadata.audio_streams > 0:
+        video_bitrate_kbps = total_bitrate_kbps - config.audio_bitrate_kbps
+        if video_bitrate_kbps < MIN_VIDEO_BITRATE_KBPS:
+            raise ValueError(
+                f"video target_size_kb={target_size_kb} is too small after reserving "
+                f"{config.audio_bitrate_kbps} kbps for audio."
+            )
+        return video_bitrate_kbps, config.audio_bitrate_kbps
+
+    if total_bitrate_kbps < MIN_VIDEO_BITRATE_KBPS:
+        raise ValueError(
+            f"video target_size_kb={target_size_kb} is too small for duration {metadata.duration_ms}ms."
+        )
+    return total_bitrate_kbps, 0
+
+
+def copy_source_video(source_path: Path, target_path: Path, config: VideoOutputConfig | None = None) -> Path:
     target_path.parent.mkdir(parents=True, exist_ok=True)
+    if config is not None:
+        config.validate()
+    if config is not None and config.target_size_ratio > 0:
+        source_size_kb = source_path.stat().st_size / 1024
+        target_size_kb = round(source_size_kb * config.target_size_ratio)
+        source_metadata = probe_media(source_path)
+        video_bitrate_kbps, audio_bitrate_kbps = _resolve_video_export_bitrates_kbps(config, source_metadata, target_size_kb)
+        actual_target_path = target_path
+        if source_path.resolve() == target_path.resolve():
+            actual_target_path = target_path.with_name(f"{target_path.stem}.transcoding{target_path.suffix}")
+
+        command = [
+            "ffmpeg",
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            str(source_path),
+            "-c:v",
+            "libx264",
+            "-preset",
+            "medium",
+            "-pix_fmt",
+            "yuv420p",
+            "-b:v",
+            f"{video_bitrate_kbps}k",
+            "-maxrate",
+            f"{video_bitrate_kbps}k",
+            "-bufsize",
+            f"{max(video_bitrate_kbps * 2, video_bitrate_kbps)}k",
+        ]
+        if audio_bitrate_kbps > 0:
+            command.extend(["-c:a", "aac", "-b:a", f"{audio_bitrate_kbps}k"])
+        else:
+            command.append("-an")
+        command.extend(["-movflags", "+faststart", str(actual_target_path)])
+        run_command(command)
+        if actual_target_path != target_path:
+            actual_target_path.replace(target_path)
+        return target_path
+
     if source_path.resolve() != target_path.resolve():
         shutil.copy2(source_path, target_path)
     return target_path
@@ -172,6 +273,9 @@ def extract_background_audio_mp3(
     temp_dir = Path(tempfile.mkdtemp(prefix="video-analysis-demucs-"))
     should_cleanup_temp_dir = False
     try:
+        source_metadata = probe_media(source_path)
+        source_size_kb = source_path.stat().st_size / 1024
+        mp3_bitrate_kbps = _resolve_background_audio_bitrate_kbps(config, source_size_kb, source_metadata.duration_ms)
         separation_root = temp_dir / "separated"
         command = [
             sys.executable,
@@ -180,7 +284,7 @@ def extract_background_audio_mp3(
             "--two-stems=vocals",
             "--mp3",
             "--mp3-bitrate",
-            str(config.mp3_bitrate_kbps),
+            str(mp3_bitrate_kbps),
             "--device",
             config.demucs_device,
             "-n",
@@ -237,7 +341,7 @@ def _resolve_bgm_cache_path(config: AudioConfig, cache_key_material: str) -> Pat
     cache_key = hashlib.sha256(
         (
             f"{cache_key_material}|{config.method}|{config.demucs_model}|{config.demucs_device}|"
-            f"{config.mp3_bitrate_kbps}|{config.jobs}"
+            f"{config.mp3_bitrate_kbps}|{config.target_size_ratio}|{config.jobs}"
         ).encode("utf-8")
     ).hexdigest()
     cache_root = Path(config.cache_dir)

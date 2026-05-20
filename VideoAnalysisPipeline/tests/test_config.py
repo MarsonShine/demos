@@ -46,11 +46,35 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(config.faster_whisper.model_size, "base.en")
             self.assertEqual(config.faster_whisper.cpu_threads, 2)
             self.assertEqual(config.subtitle.sample_fps, 4.0)
+            self.assertEqual(config.video.target_size_ratio, 0.0)
+            self.assertEqual(config.video.audio_bitrate_kbps, 128)
             self.assertEqual(config.audio.method, "demucs")
             self.assertEqual(config.audio.demucs_model, "htdemucs")
+            self.assertEqual(config.audio.target_size_ratio, 0.0)
             self.assertTrue(config.audio.cache_enabled)
             self.assertEqual(config.azure_openai.deployment, "gpt-5.4-mini")
             self.assertEqual(config.overview.education_stage, "小学")
+
+    def test_loads_video_and_audio_target_size_ratios(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "pipeline_config.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "azure_speech": {"subscription_key": "", "region": ""},
+                        "faster_whisper": {"model_size": "base.en"},
+                        "video": {"target_size_ratio": 0.1233, "audio_bitrate_kbps": 128},
+                        "audio": {"target_size_ratio": 0.0129, "mp3_bitrate_kbps": 192},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            config = load_config(config_path)
+
+            self.assertAlmostEqual(config.video.target_size_ratio, 0.1233)
+            self.assertEqual(config.video.audio_bitrate_kbps, 128)
+            self.assertAlmostEqual(config.audio.target_size_ratio, 0.0129)
 
     def test_environment_can_override_provider(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -103,6 +127,60 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(config.azure_openai.endpoint, "https://example.openai.azure.com")
             self.assertEqual(config.azure_openai.api_key, "test-key")
             self.assertEqual(config.azure_openai.deployment, "gpt-5.4-mini")
+
+    def test_steps_defaults_are_all_true(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "pipeline_config.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "azure_speech": {"subscription_key": "", "region": ""},
+                        "faster_whisper": {"model_size": "base.en"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            config = load_config(config_path)
+
+            self.assertTrue(config.steps.export_source_video)
+            self.assertTrue(config.steps.export_cover)
+            self.assertTrue(config.steps.export_muted_video)
+            self.assertTrue(config.steps.export_background_audio)
+            self.assertTrue(config.steps.generate_summary)
+            self.assertTrue(config.steps.export_workbook)
+            self.assertTrue(config.steps.export_review_page)
+            self.assertTrue(config.steps.export_csv)
+
+    def test_steps_can_be_selectively_disabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "pipeline_config.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "azure_speech": {"subscription_key": "", "region": ""},
+                        "faster_whisper": {"model_size": "base.en"},
+                        "steps": {
+                            "export_cover": False,
+                            "export_background_audio": False,
+                            "generate_summary": False,
+                            "export_workbook": False,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            config = load_config(config_path)
+
+            self.assertTrue(config.steps.export_source_video)
+            self.assertFalse(config.steps.export_cover)
+            self.assertTrue(config.steps.export_muted_video)
+            self.assertFalse(config.steps.export_background_audio)
+            self.assertFalse(config.steps.generate_summary)
+            self.assertFalse(config.steps.export_workbook)
+            self.assertTrue(config.steps.export_review_page)
+            self.assertTrue(config.steps.export_csv)
 
 
 if __name__ == "__main__":

@@ -36,11 +36,16 @@
     "alignment_max_words_ahead": 80,
     "allow_asr_fallback": true
   },
+  "video": {
+    "target_size_ratio": 0.0,
+    "audio_bitrate_kbps": 128
+  },
   "audio": {
     "method": "demucs",
     "demucs_model": "htdemucs",
     "demucs_device": "cpu",
     "mp3_bitrate_kbps": 192,
+    "target_size_ratio": 0.0,
     "jobs": 0,
     "cache_enabled": true,
     "cache_dir": ".video_pipeline_cache\\bgm"
@@ -67,5 +72,15 @@
     "min_segment_duration_ms": 500,
     "max_segment_duration_ms": 12000,
     "max_boundary_shift_ms": 800
+  },
+  "steps": {
+    "export_source_video": true,
+    "export_cover": true,
+    "export_muted_video": true,
+    "export_background_audio": true,
+    "generate_summary": true,
+    "export_workbook": true,
+    "export_review_page": true,
+    "export_csv": true
   }
 }
