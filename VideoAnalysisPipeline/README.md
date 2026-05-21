@@ -39,7 +39,7 @@ py run_pipeline.py single --source-mp4 <mp4> --output-dir <output>
 py run_pipeline.py batch --input-root <input> --output-root <output>
 py run_pipeline.py batch --input-root <input> --output-root <output> --final-output mod
 py run_pipeline.py batch --input-root <input> --output-root <output> --video-target-size-ratio 0.0833 --audio-target-size-ratio 0.4380
-py run_pipeline.py single --source-mp4 <mp4> --output-dir <output> --video-target-size-ratio 64 --video-audio-bitrate-kbps 32 --audio-target-size-ratio 32
+py run_pipeline.py single --source-mp4 <mp4> --output-dir <output> --video-target-size-ratio 1000 --video-audio-bitrate-kbps 128 --audio-target-size-ratio 128
 ```
 
 You can now split the workflow when you do **not** want to rerun everything:
@@ -59,6 +59,23 @@ py run_pipeline.py batch-overview --output-root <existing-output-root>
 - `--video-audio-bitrate-kbps`: controls the embedded AAC audio bitrate inside `02.mp4`.
 - `--audio-target-size-ratio`: accepts either a numeric ratio or an explicit MP3 bitrate in kbps, such as `32`, `64`, `128`, `32k`, or `128kbps`.
 - Smallest generally usable baseline: `02.mp4` video `64 kbps` + embedded audio `32 kbps`, and `03.mp3` at `32 kbps`.
+
+## JS Subtitle DB To SRT
+
+For subtitle JS files like `subtitleDB.js`, use the standalone converter package:
+
+```powershell
+py -m js_subtitle_converter single --source-js <subtitle-js>
+py -m js_subtitle_converter single --source-js <subtitle-js> --resume
+py -m js_subtitle_converter batch --input-root <folder> --resume
+py -m js_subtitle_converter batch --source-js <a.js> --source-js <b.js>
+py -m js_subtitle_converter batch --input-root <folder> --resume --no-cleanup
+```
+
+- The converter reads `wordArr` and `timeArr`, pairs `wordArr[n]` with `timeArr[2n]` and `timeArr[2n+1]`, and writes a sibling `.srt` file beside the source JS file.
+- Chinese punctuation inside `wordArr` is normalized to English punctuation before export.
+- By default, successful conversion cleans the folder and keeps only `mp4/srt/mp3` files; this removes source `js` and `.js_to_srt` progress files.
+- Progress JSON files are written under a sibling `.js_to_srt` folder, and batch resume state is stored in `.js_to_srt/batch_progress.json`. If you need resume files preserved, run with `--no-cleanup`.
 
 ## Azure OpenAI overview
 

@@ -41,7 +41,7 @@ Excel 中难度值如果未手工配置，会根据字幕内容复杂度自动�
  py run_pipeline.py single --asr-provider azure-speech --source-mp4 F:\Your\Input\source.mp4 --output-dir 
 F:\Your\Output\1
 
-推荐的视频目标大小比例是 8.33%（即原视频的 1/12），音频目标大小比例是 43.80%（即原视频的 1/2.28）。这个比例更适合原始码率正常或偏高的视频；如果你只是想直接拿到尽可能小且还能用的输出，建议直接使用：--video-target-size-ratio 64 --video-audio-bitrate-kbps 32 --audio-target-size-ratio 32。如果目标压得很紧，工具会自动改用更低的标准分辨率来继续缩小文件，而不是只靠抬高码率保画质。如果不确定可以先试验一个视频，看看导出的视频和音频质量是否满足需求，再微调这两个比例或码率。
+推荐的视频目标大小比例是 8.33%（即原视频的 1/12），音频目标大小比例是 43.80%（即原视频的 1/2.28）。这个比例更适合原始码率正常或偏高的视频；如果你只是想直接拿到尽可能小且还能用的输出，建议直接使用：--video-target-size-ratio 1000 --video-audio-bitrate-kbps 64 --audio-target-size-ratio 64。如果目标压得很紧，工具会自动改用更低的标准分辨率来继续缩小文件，而不是只靠抬高码率保画质。如果不确定可以先试验一个视频，看看导出的视频和音频质量是否满足需求，再微调这两个比例或码率。
 py run_pipeline.py single --source-mp4 "/Your/Input/source.mp4" --source-srt "/Your/Input/source.srt" --output-dir "/Your/Output" --video-target-size-ratio 0.0833 --audio-target-size-ratio 0.4380 --skip summary
 
 批量
