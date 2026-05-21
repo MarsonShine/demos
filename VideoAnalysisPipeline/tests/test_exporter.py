@@ -16,7 +16,7 @@ class ExporterTests(unittest.TestCase):
             output_path = Path(tmp_dir) / "dubbing.result.xlsx"
             export_workbook(
                 output_path=output_path,
-                rows=[(1, 1, "Dan finds a big box.", "00:00:05.333", "00:00:09.166")],
+                rows=[(1, 1, "Dan finds a big box.", "丹发现了一个大箱子。", "00:00:05.333", "00:00:09.166")],
                 overview_rows=[
                     OverviewRow(
                         education_stage="小学",
@@ -39,6 +39,8 @@ class ExporterTests(unittest.TestCase):
             self.assertEqual(workbook.worksheets[0].cell(row=2, column=4).value, "Dan's Box")
             self.assertEqual(workbook.worksheets[1].cell(row=1, column=1).value, "序号")
             self.assertEqual(workbook.worksheets[1].cell(row=2, column=3).value, "Dan finds a big box.")
+            self.assertEqual(workbook.worksheets[1].cell(row=1, column=4).value, "分视频文本（中文）")
+            self.assertEqual(workbook.worksheets[1].cell(row=2, column=4).value, "丹发现了一个大箱子。")
 
     def test_exports_review_page_with_video_and_segments(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

@@ -10,6 +10,7 @@ import tempfile
 from typing import Any, Protocol
 
 from video_analysis_pipeline.asr import create_transcriber, normalize_asr_provider
+from video_analysis_pipeline.azure_openai_translation import translate_segments_for_education
 from video_analysis_pipeline.config import PipelineConfig, SegmentationConfig
 from video_analysis_pipeline.azure_openai_summary import generate_video_summary
 from video_analysis_pipeline.exporter import (
@@ -71,6 +72,16 @@ class ExistingOutputItem:
     manifest: dict[str, Any]
 
 
+def _segments_need_translation(segments: list[Segment]) -> bool:
+    return any(segment.text.strip() and not (segment.translated_text or "").strip() for segment in segments)
+
+
+def _populate_segment_translations(segments: list[Segment], config: PipelineConfig) -> list[Segment]:
+    if not _segments_need_translation(segments):
+        return segments
+    return translate_segments_for_education(segments=segments, config=config.azure_openai)
+
+
 MOD_FINAL_OUTPUT = "mod"
 MOD_ITEM_ROOT_NAME = "dubbing"
 MOD_DEFAULT_WORKBOOK_NAME = "movie_dubbing.xlsx"
@@ -130,6 +141,8 @@ def process_single_video(
             "extract-cover",
             lambda: extract_cover(source_asset, output_dir / "01.jpg"),
         )
+
+
     else:
         cover_path = output_dir / "01.jpg"
 
@@ -234,6 +247,11 @@ def process_single_video(
             subtitle_spans=subtitle_spans,
             segments=segments,
             config=config,
+        )
+        progress_tracker.run(
+            "translate-segments",
+            lambda: _populate_segment_translations(segments, config),
+            details={"deployment": config.azure_openai.deployment, "segment_count": len(segments)},
         )
 
     manifest_path = output_dir / "manifest.json"
@@ -737,6 +755,11 @@ def process_single_overview(
         segments=existing_output.segments,
         config=config,
     )
+    progress_tracker.run(
+        "translate-segments",
+        lambda: _populate_segment_translations(existing_output.segments, config),
+        details={"deployment": config.azure_openai.deployment, "segment_count": len(existing_output.segments)},
+    )
     segment_rows = segments_to_rows(existing_output.segments)
     actual_workbook_path = progress_tracker.run(
         "write-overview-workbook",
@@ -761,6 +784,7 @@ def process_single_overview(
     write_json(existing_output.output_dir / "manifest.json", manifest_payload)
 
     segments_payload = _read_json_payload(existing_output.output_dir / "segments.json")
+    segments_payload["segments"] = [segment.to_json() for segment in existing_output.segments]
     segments_payload["overview"] = overview_row.to_json()
     write_json(existing_output.output_dir / "segments.json", segments_payload)
 
@@ -841,6 +865,7 @@ def process_batch_overview(
     all_rows = []
     overview_rows: list[OverviewRow] = []
     for item in processed_items:
+        _populate_segment_translations(item.segments, config)
         all_rows.extend(segments_to_rows(item.segments))
         if item.overview_row is not None:
             overview_rows.append(item.overview_row)

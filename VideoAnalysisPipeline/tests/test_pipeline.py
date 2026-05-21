@@ -23,6 +23,87 @@ from video_analysis_pipeline.pipeline import (
 
 
 class PipelineTests(unittest.TestCase):
+    def test_process_single_overview_translates_segments_before_writing_workbook(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir) / "output"
+            output_dir.mkdir(parents=True)
+            workbook_path = output_dir / "dubbing.result.xlsx"
+
+            (output_dir / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "sequence_no": 1,
+                        "source_mp4": str(output_dir / "02.mp4"),
+                        "overview": {
+                            "education_stage": "小学",
+                            "subject": "英语",
+                            "sequence_no": 1,
+                            "movie_name": "Dan's Box",
+                            "video_title": "Dan's Box",
+                            "muted_video": "01.mp4",
+                            "full_video": "02.mp4",
+                            "background_audio": "03.mp3",
+                            "cover_image": "01.jpg",
+                            "video_description": "旧简介",
+                            "difficulty": "",
+                            "dialogue_audio": "",
+                            "topic": "",
+                            "source": "[7]绘本配音",
+                        },
+                        "outputs": {
+                            "workbook": str(workbook_path),
+                        },
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            (output_dir / "segments.json").write_text(
+                json.dumps(
+                    {
+                        "sequence_no": 1,
+                        "segments": [
+                            Segment(
+                                sequence_no=1,
+                                segment_no=1,
+                                text="Dan finds a big box.",
+                                start_ms=0,
+                                end_ms=1_000,
+                            ).to_json()
+                        ],
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            (output_dir / "02.mp4").write_bytes(b"fake")
+
+            config = load_config(Path("pipeline_config.json"))
+
+            def fake_translate(*, segments: list[Segment], config: object) -> list[Segment]:
+                for segment in segments:
+                    segment.translated_text = "丹发现了一个大箱子。"
+                return segments
+
+            with patch("video_analysis_pipeline.pipeline.generate_video_summary", return_value="新的简介"), patch(
+                "video_analysis_pipeline.pipeline.translate_segments_for_education",
+                side_effect=fake_translate,
+            ) as translate_mock:
+                process_single_overview(
+                    output_dir=output_dir,
+                    config=config,
+                    template_path=None,
+                    workbook_output=workbook_path,
+                )
+
+            translate_mock.assert_called_once()
+            workbook = load_workbook(workbook_path)
+            self.assertEqual(workbook.worksheets[1].cell(row=2, column=4).value, "丹发现了一个大箱子。")
+            updated_segments_payload = json.loads((output_dir / "segments.json").read_text(encoding="utf-8"))
+            self.assertEqual(updated_segments_payload["segments"][0]["translated_text"], "丹发现了一个大箱子。")
+
     def test_discover_batch_inputs_recurses_and_keeps_relative_paths(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             input_root = Path(tmp_dir) / "input"
@@ -426,7 +507,10 @@ class PipelineTests(unittest.TestCase):
             )
 
             config = load_config(Path(__file__).resolve().parents[1] / "pipeline_config.json")
-            with patch("video_analysis_pipeline.pipeline.generate_video_summary", return_value="狮子和老鼠学会互相帮助。"):
+            with patch("video_analysis_pipeline.pipeline.generate_video_summary", return_value="狮子和老鼠学会互相帮助。"), patch(
+                "video_analysis_pipeline.pipeline.translate_segments_for_education",
+                side_effect=lambda *, segments, config: [setattr(segment, "translated_text", f"中文：{segment.text}") or segment for segment in segments],
+            ):
                 result = process_single_overview(output_dir=output_dir, config=config)
 
             self.assertEqual(result.sequence_no, 7)
@@ -436,6 +520,7 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(workbook.worksheets[0].cell(row=2, column=10).value, "狮子和老鼠学会互相帮助。")
             self.assertEqual(workbook.worksheets[0].cell(row=2, column=11).value, "1")
             self.assertEqual(workbook.worksheets[1].cell(row=2, column=3).value, "The lion roars loudly.")
+            self.assertEqual(workbook.worksheets[1].cell(row=2, column=4).value, "中文：The lion roars loudly.")
 
             manifest_payload = json.loads((output_dir / "manifest.json").read_text(encoding="utf-8"))
             self.assertEqual(manifest_payload["overview"]["video_title"], "The Lion And The Mouse")
@@ -446,6 +531,7 @@ class PipelineTests(unittest.TestCase):
 
             segments_payload = json.loads((output_dir / "segments.json").read_text(encoding="utf-8"))
             self.assertEqual(segments_payload["overview"]["movie_name"], "The Lion And The Mouse")
+            self.assertEqual(segments_payload["segments"][0]["translated_text"], "中文：The lion roars loudly.")
 
     def test_estimate_difficulty_scores_subtitle_complexity_on_1_to_5_scale(self) -> None:
         simple_spans = [

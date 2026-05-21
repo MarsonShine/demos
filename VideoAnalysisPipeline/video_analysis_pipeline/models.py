@@ -154,6 +154,7 @@ class Segment:
     text: str
     start_ms: int
     end_ms: int
+    translated_text: str | None = None
     source_utterance_indexes: list[int] = field(default_factory=list)
     confidence: float | None = None
     text_source: str = "asr"
@@ -167,11 +168,12 @@ class Segment:
     def duration_ms(self) -> int:
         return max(0, self.end_ms - self.start_ms)
 
-    def to_excel_row(self) -> tuple[int, int, str, str, str]:
+    def to_excel_row(self) -> tuple[int, int, str, str, str, str]:
         return (
             self.sequence_no,
             self.segment_no,
             self.text,
+            self.translated_text or "",
             format_timestamp(self.start_ms),
             format_timestamp(self.end_ms),
         )
@@ -181,6 +183,7 @@ class Segment:
             "sequence_no": self.sequence_no,
             "segment_no": self.segment_no,
             "text": self.text,
+            "translated_text": self.translated_text,
             "start_ms": self.start_ms,
             "end_ms": self.end_ms,
             "start_timecode": format_timestamp(self.start_ms),
@@ -203,6 +206,7 @@ class Segment:
             sequence_no=int(payload["sequence_no"]),
             segment_no=int(payload["segment_no"]),
             text=str(payload["text"]),
+            translated_text=str(payload["translated_text"]) if payload.get("translated_text") is not None else None,
             start_ms=int(payload["start_ms"]),
             end_ms=int(payload["end_ms"]),
             source_utterance_indexes=[int(item) for item in payload.get("source_utterance_indexes", [])],

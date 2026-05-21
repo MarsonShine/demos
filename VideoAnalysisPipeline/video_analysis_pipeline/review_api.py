@@ -36,21 +36,7 @@ def _write_time_range(entry: dict[str, Any], start_ms: int, end_ms: int) -> None
 
 
 def _segment_from_json(payload: dict[str, Any]) -> Segment:
-    return Segment(
-        sequence_no=int(payload["sequence_no"]),
-        segment_no=int(payload["segment_no"]),
-        text=str(payload["text"]),
-        start_ms=int(payload["start_ms"]),
-        end_ms=int(payload["end_ms"]),
-        source_utterance_indexes=[int(item) for item in payload.get("source_utterance_indexes", [])],
-        confidence=payload.get("confidence"),
-        text_source=str(payload.get("text_source", "asr")),
-        alignment_confidence=payload.get("alignment_confidence"),
-        ocr_confidence=payload.get("ocr_confidence", payload.get("subtitle_confidence")),
-        source_subtitle_index=payload.get("source_subtitle_index"),
-        source_word_range=[int(item) for item in payload["source_word_range"]] if payload.get("source_word_range") else None,
-        quality_flags=[str(item) for item in payload.get("quality_flags", [])],
-    )
+    return Segment.from_json(payload)
 
 
 def _resolve_adjustment_index(adjustment: dict[str, Any], segments: list[dict[str, Any]]) -> int:
@@ -237,7 +223,7 @@ def apply_review_adjustments(review_page_path: Path, adjustments: list[dict[str,
                 break
         write_json(batch_summary_path, batch_summary_payload)
 
-        merged_rows: list[tuple[int, int, str, str, str]] = []
+        merged_rows: list[tuple[object, ...]] = []
         overview_rows: list[OverviewRow] = []
         for item in batch_summary_payload.get("items", []):
             item_output_dir = Path(item["output_dir"]).resolve()

@@ -47,10 +47,12 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(config.faster_whisper.cpu_threads, 2)
             self.assertEqual(config.subtitle.sample_fps, 4.0)
             self.assertEqual(config.video.target_size_ratio, 0.0)
+            self.assertEqual(config.video.target_bitrate_kbps, 0)
             self.assertEqual(config.video.audio_bitrate_kbps, 128)
             self.assertEqual(config.audio.method, "demucs")
             self.assertEqual(config.audio.demucs_model, "htdemucs")
             self.assertEqual(config.audio.target_size_ratio, 0.0)
+            self.assertEqual(config.audio.target_bitrate_kbps, 0)
             self.assertTrue(config.audio.cache_enabled)
             self.assertEqual(config.azure_openai.deployment, "gpt-5.4-mini")
             self.assertEqual(config.overview.education_stage, "小学")
@@ -73,8 +75,49 @@ class ConfigTests(unittest.TestCase):
             config = load_config(config_path)
 
             self.assertAlmostEqual(config.video.target_size_ratio, 0.1233)
+            self.assertEqual(config.video.target_bitrate_kbps, 0)
             self.assertEqual(config.video.audio_bitrate_kbps, 128)
             self.assertAlmostEqual(config.audio.target_size_ratio, 0.0129)
+            self.assertEqual(config.audio.target_bitrate_kbps, 0)
+
+    def test_loads_video_target_bitrate_kbps(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "pipeline_config.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "azure_speech": {"subscription_key": "", "region": ""},
+                        "faster_whisper": {"model_size": "base.en"},
+                        "video": {"target_bitrate_kbps": 500, "audio_bitrate_kbps": 64},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            config = load_config(config_path)
+
+            self.assertEqual(config.video.target_size_ratio, 0.0)
+            self.assertEqual(config.video.target_bitrate_kbps, 500)
+            self.assertEqual(config.video.audio_bitrate_kbps, 64)
+
+    def test_loads_audio_target_bitrate_kbps(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "pipeline_config.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "azure_speech": {"subscription_key": "", "region": ""},
+                        "faster_whisper": {"model_size": "base.en"},
+                        "audio": {"target_bitrate_kbps": 64, "mp3_bitrate_kbps": 192},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            config = load_config(config_path)
+
+            self.assertEqual(config.audio.target_size_ratio, 0.0)
+            self.assertEqual(config.audio.target_bitrate_kbps, 64)
 
     def test_environment_can_override_provider(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

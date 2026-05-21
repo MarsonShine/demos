@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -41,6 +42,8 @@ _SKIP_STEP_TO_FIELD = {
     "csv": "export_csv",
 }
 
+_BITRATE_PATTERN = re.compile(r"^(?P<value>\d+(?:\.\d+)?)\s*(?P<unit>k|kbps)?$", re.IGNORECASE)
+
 
 def add_resume_arg(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
@@ -68,15 +71,30 @@ def add_skip_args(parser: argparse.ArgumentParser) -> None:
 def add_export_size_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--video-target-size-ratio",
-        type=float,
+        type=str,
         default=None,
-        help="Optional compression ratio (0 < ratio <= 1) for exported 02.mp4 relative to source size. The pipeline derives a video bitrate from source file size and duration.",
+        help=(
+            "Optional compression ratio (0 <= ratio <= 1) or explicit video bitrate in kbps for exported 02.mp4. "
+            "Examples: 0.0833, 64, 500, 64k, 500kbps. The minimum usable video bitrate floor is 64 kbps."
+        ),
+    )
+    parser.add_argument(
+        "--video-audio-bitrate-kbps",
+        type=int,
+        default=None,
+        help=(
+            "Optional embedded AAC bitrate in kbps for the audio track inside exported 02.mp4. "
+            "For the smallest generally usable 02.mp4, use 32."
+        ),
     )
     parser.add_argument(
         "--audio-target-size-ratio",
-        type=float,
+        type=str,
         default=None,
-        help="Optional compression ratio (0 < ratio <= 1) for exported 03.mp3 relative to source size. The pipeline derives an MP3 bitrate from source file size and duration.",
+        help=(
+            "Optional compression ratio (0 <= ratio <= 1) or explicit MP3 bitrate in kbps for exported 03.mp3. "
+            "Examples: 0.4380, 32, 64, 128, 32k, 128kbps. The minimum usable background-audio bitrate floor is 32 kbps."
+        ),
     )
 
 
@@ -209,6 +227,39 @@ def resolve_batch_workbook_output(
     return output_root / "dubbing.result.xlsx"
 
 
+def _resolve_ratio_or_bitrate(value: str, option_name: str) -> tuple[float, int]:
+    normalized_value = value.strip().lower()
+    if normalized_value in {"max", "middle", "min"}:
+        raise ValueError(
+            f"{option_name} no longer accepts max/middle/min. "
+            "Use a ratio between 0 and 1, or an explicit bitrate like 64, 128, 500, 64k, 128kbps."
+        )
+    bitrate_match = _BITRATE_PATTERN.fullmatch(normalized_value)
+    if bitrate_match is not None:
+        parsed_value = float(bitrate_match.group("value"))
+        if bitrate_match.group("unit") or parsed_value > 1:
+            if parsed_value <= 0:
+                raise ValueError(f"{option_name} bitrate values must be greater than 0.")
+            return 0.0, max(1, int(round(parsed_value)))
+    try:
+        parsed_ratio = float(normalized_value)
+    except ValueError as exc:
+        raise ValueError(
+            f"{option_name} must be a ratio between 0 and 1, or an explicit bitrate like 64, 128, 500, 64k, 128kbps."
+        ) from exc
+    if not 0 <= parsed_ratio <= 1:
+        raise ValueError(f"{option_name} ratio values must be between 0 and 1.")
+    return parsed_ratio, 0
+
+
+def resolve_video_target_size_ratio(value: str) -> tuple[float, int]:
+    return _resolve_ratio_or_bitrate(value, "video-target-size-ratio")
+
+
+def resolve_audio_target_size_ratio(value: str) -> tuple[float, int]:
+    return _resolve_ratio_or_bitrate(value, "audio-target-size-ratio")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -232,10 +283,17 @@ def main(argv: list[str] | None = None) -> int:
             config.faster_whisper.language = language
         video_target_size_ratio = getattr(args, "video_target_size_ratio", None)
         if video_target_size_ratio is not None:
-            config.video.target_size_ratio = video_target_size_ratio
+            resolved_video_target_ratio, resolved_video_target_bitrate = resolve_video_target_size_ratio(video_target_size_ratio)
+            config.video.target_size_ratio = resolved_video_target_ratio
+            config.video.target_bitrate_kbps = resolved_video_target_bitrate
+        video_audio_bitrate_kbps = getattr(args, "video_audio_bitrate_kbps", None)
+        if video_audio_bitrate_kbps is not None:
+            config.video.audio_bitrate_kbps = video_audio_bitrate_kbps
         audio_target_size_ratio = getattr(args, "audio_target_size_ratio", None)
         if audio_target_size_ratio is not None:
-            config.audio.target_size_ratio = audio_target_size_ratio
+            resolved_audio_target_ratio, resolved_audio_target_bitrate = resolve_audio_target_size_ratio(audio_target_size_ratio)
+            config.audio.target_size_ratio = resolved_audio_target_ratio
+            config.audio.target_bitrate_kbps = resolved_audio_target_bitrate
         skip_steps = getattr(args, "skip", None)
         if skip_steps:
             for step in skip_steps:

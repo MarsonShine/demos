@@ -14,8 +14,8 @@ def _build_config_stub() -> SimpleNamespace:
         asr=SimpleNamespace(provider="faster-whisper"),
         azure_speech=SimpleNamespace(language="en-US"),
         faster_whisper=SimpleNamespace(language="en"),
-        video=SimpleNamespace(target_size_ratio=0.0, audio_bitrate_kbps=128),
-        audio=SimpleNamespace(target_size_ratio=0.0),
+        video=SimpleNamespace(target_size_ratio=0.0, target_bitrate_kbps=0, audio_bitrate_kbps=128),
+        audio=SimpleNamespace(target_size_ratio=0.0, target_bitrate_kbps=0),
         steps=SimpleNamespace(
             export_source_video=True,
             export_cover=True,
@@ -165,7 +165,95 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         self.assertAlmostEqual(config.video.target_size_ratio, 0.1233)
+        self.assertEqual(config.video.target_bitrate_kbps, 0)
         self.assertAlmostEqual(config.audio.target_size_ratio, 0.0129)
+        self.assertEqual(config.audio.target_bitrate_kbps, 0)
+
+    def test_single_accepts_explicit_video_target_bitrate_kbps(self) -> None:
+        config = _build_config_stub()
+        with patch("video_analysis_pipeline.cli.load_config", return_value=config), patch(
+            "video_analysis_pipeline.cli.process_single_video",
+            return_value=ProcessedItem(
+                sequence_no=1,
+                source_mp4=Path("E:\\tmp\\02.mp4"),
+                output_dir=Path("E:\\tmp\\output"),
+                workbook_path=Path("E:\\tmp\\output\\dubbing.result.xlsx"),
+                review_page_path=Path("E:\\tmp\\output\\review.html"),
+                segments=[],
+            ),
+        ):
+            exit_code = main(
+                [
+                    "single",
+                    "--source-mp4",
+                    "E:\\tmp\\clip.mp4",
+                    "--output-dir",
+                    "E:\\tmp\\output",
+                    "--video-target-size-ratio",
+                    "500",
+                ]
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(config.video.target_size_ratio, 0.0)
+        self.assertEqual(config.video.target_bitrate_kbps, 500)
+
+    def test_single_accepts_explicit_audio_target_bitrate_kbps(self) -> None:
+        config = _build_config_stub()
+        with patch("video_analysis_pipeline.cli.load_config", return_value=config), patch(
+            "video_analysis_pipeline.cli.process_single_video",
+            return_value=ProcessedItem(
+                sequence_no=1,
+                source_mp4=Path("E:\\tmp\\02.mp4"),
+                output_dir=Path("E:\\tmp\\output"),
+                workbook_path=Path("E:\\tmp\\output\\dubbing.result.xlsx"),
+                review_page_path=Path("E:\\tmp\\output\\review.html"),
+                segments=[],
+            ),
+        ):
+            exit_code = main(
+                [
+                    "single",
+                    "--source-mp4",
+                    "E:\\tmp\\clip.mp4",
+                    "--output-dir",
+                    "E:\\tmp\\output",
+                    "--audio-target-size-ratio",
+                    "64",
+                ]
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(config.audio.target_size_ratio, 0.0)
+        self.assertEqual(config.audio.target_bitrate_kbps, 64)
+
+    def test_single_accepts_video_embedded_audio_bitrate_override(self) -> None:
+        config = _build_config_stub()
+        with patch("video_analysis_pipeline.cli.load_config", return_value=config), patch(
+            "video_analysis_pipeline.cli.process_single_video",
+            return_value=ProcessedItem(
+                sequence_no=1,
+                source_mp4=Path("E:\\tmp\\02.mp4"),
+                output_dir=Path("E:\\tmp\\output"),
+                workbook_path=Path("E:\\tmp\\output\\dubbing.result.xlsx"),
+                review_page_path=Path("E:\\tmp\\output\\review.html"),
+                segments=[],
+            ),
+        ):
+            exit_code = main(
+                [
+                    "single",
+                    "--source-mp4",
+                    "E:\\tmp\\clip.mp4",
+                    "--output-dir",
+                    "E:\\tmp\\output",
+                    "--video-audio-bitrate-kbps",
+                    "32",
+                ]
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(config.video.audio_bitrate_kbps, 32)
 
     def test_skip_flag_disables_specified_steps(self) -> None:
         config = _build_config_stub()

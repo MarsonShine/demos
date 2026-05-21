@@ -126,6 +126,7 @@ class AudioConfig:
     demucs_device: str = "cpu"
     mp3_bitrate_kbps: int = 192
     target_size_ratio: float = 0.0
+    target_bitrate_kbps: int = 0
     jobs: int = 0
     cache_enabled: bool = True
     cache_dir: str = ".video_pipeline_cache\\bgm"
@@ -141,6 +142,10 @@ class AudioConfig:
             raise ValueError("audio mp3_bitrate_kbps must be at least 32.")
         if self.target_size_ratio < 0:
             raise ValueError("audio target_size_ratio must be >= 0.")
+        if self.target_bitrate_kbps < 0:
+            raise ValueError("audio target_bitrate_kbps must be >= 0.")
+        if self.target_size_ratio > 0 and self.target_bitrate_kbps > 0:
+            raise ValueError("audio target_size_ratio and target_bitrate_kbps cannot both be set.")
         if self.jobs < 0:
             raise ValueError("audio jobs must be >= 0.")
         if not self.cache_dir:
@@ -150,11 +155,16 @@ class AudioConfig:
 @dataclass(slots=True)
 class VideoOutputConfig:
     target_size_ratio: float = 0.0
+    target_bitrate_kbps: int = 0
     audio_bitrate_kbps: int = 128
 
     def validate(self) -> None:
         if self.target_size_ratio < 0:
             raise ValueError("video target_size_ratio must be >= 0.")
+        if self.target_bitrate_kbps < 0:
+            raise ValueError("video target_bitrate_kbps must be >= 0.")
+        if self.target_size_ratio > 0 and self.target_bitrate_kbps > 0:
+            raise ValueError("video target_size_ratio and target_bitrate_kbps cannot both be set.")
         if self.audio_bitrate_kbps < 32:
             raise ValueError("video audio_bitrate_kbps must be at least 32.")
 
@@ -357,6 +367,7 @@ def load_config(path: Path) -> PipelineConfig:
 
     video_config = VideoOutputConfig(
         target_size_ratio=float(video_data.get("target_size_ratio", 0.0)),
+        target_bitrate_kbps=int(video_data.get("target_bitrate_kbps", 0)),
         audio_bitrate_kbps=int(video_data.get("audio_bitrate_kbps", 128)),
     )
 
@@ -366,6 +377,7 @@ def load_config(path: Path) -> PipelineConfig:
         demucs_device=str(audio_data.get("demucs_device", "cpu")),
         mp3_bitrate_kbps=int(audio_data.get("mp3_bitrate_kbps", 192)),
         target_size_ratio=float(audio_data.get("target_size_ratio", 0.0)),
+        target_bitrate_kbps=int(audio_data.get("target_bitrate_kbps", 0)),
         jobs=int(audio_data.get("jobs", 0)),
         cache_enabled=bool(audio_data.get("cache_enabled", True)),
         cache_dir=str(audio_data.get("cache_dir", ".video_pipeline_cache\\bgm")),

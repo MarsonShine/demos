@@ -183,13 +183,13 @@ class ReviewApiTests(unittest.TestCase):
 
             item_workbook = load_workbook(workbook_path)
             self.assertEqual(item_workbook.worksheets[0].cell(row=2, column=4).value, "Review Story")
-            self.assertEqual(item_workbook.worksheets[1].cell(row=2, column=4).value, "00:00:18.500")
-            self.assertEqual(item_workbook.worksheets[1].cell(row=2, column=5).value, "00:00:20.800")
+            self.assertEqual(item_workbook.worksheets[1].cell(row=2, column=5).value, "00:00:18.500")
+            self.assertEqual(item_workbook.worksheets[1].cell(row=2, column=6).value, "00:00:20.800")
 
             merged_workbook = load_workbook(batch_workbook_path)
             self.assertEqual(merged_workbook.worksheets[0].cell(row=2, column=4).value, "Review Story")
-            self.assertEqual(merged_workbook.worksheets[1].cell(row=2, column=4).value, "00:00:18.500")
-            self.assertEqual(merged_workbook.worksheets[1].cell(row=2, column=5).value, "00:00:20.800")
+            self.assertEqual(merged_workbook.worksheets[1].cell(row=2, column=5).value, "00:00:18.500")
+            self.assertEqual(merged_workbook.worksheets[1].cell(row=2, column=6).value, "00:00:20.800")
 
 
 if __name__ == "__main__":

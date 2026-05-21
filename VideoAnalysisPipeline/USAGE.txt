@@ -13,13 +13,14 @@ This tool takes a source MP4 and optional SRT file, then generates:
 - subtitle_spans.json     parsed SRT subtitle segments
 - segments.json           final aligned segments with quality flags
 - segments.csv            exported segment table
-- dubbing.result.xlsx     Excel workbook (sheet 1 overview + sheet 2 segments)
+- dubbing.result.xlsx     Excel workbook (sheet 1 overview + sheet 2 segments with English + Chinese translation column)
 - review.html             static review page for click-to-seek playback
 - progress.json           per-item progress and module timings
 
-`02.mp4` and `03.mp3` also support target-size export controls.
-When a target size is configured, the pipeline derives a bitrate from media duration instead of using the default copy/fixed-bitrate behavior.
-Video export now also applies an automatic quality floor based on the source bitrate and resolution so already-small videos are not blindly over-compressed.
+`02.mp4` and `03.mp3` also support ratio-based or bitrate-based export controls.
+When a target ratio is configured, the pipeline derives a bitrate from media duration instead of using the default copy/fixed-bitrate behavior.
+When an explicit bitrate is configured, the pipeline uses that bitrate directly.
+Video export now keeps standard H.264/AAC output but automatically downscales to a smaller standard resolution when the requested target bitrate is too tight for the source resolution.
 
 
 1. Prerequisites
@@ -68,6 +69,7 @@ Background-music output config:
 
     "video": {
       "target_size_ratio": 0.0,
+      "target_bitrate_kbps": 0,
       "audio_bitrate_kbps": 128
     }
 
@@ -77,6 +79,7 @@ Background-music output config:
       "demucs_device": "cpu",
       "mp3_bitrate_kbps": 192,
       "target_size_ratio": 0.0,
+      "target_bitrate_kbps": 0,
       "cache_enabled": true,
       "cache_dir": ".video_pipeline_cache\\bgm"
     }
@@ -85,8 +88,12 @@ The pipeline still extracts a temporary full-mix analysis track for ASR and sile
 The persisted `03.mp3` file is now the accompaniment/BGM track.
 When the same source video is reprocessed with the same audio settings, the pipeline reuses the cached BGM stem instead of rerunning Demucs.
 If `video.target_size_ratio` is greater than 0, `02.mp4` is transcoded toward that source-size ratio and uses `video.audio_bitrate_kbps` as the preferred embedded AAC bitrate.
+If `video.target_bitrate_kbps` is greater than 0, `02.mp4` uses that explicit video bitrate instead of deriving one from size.
+For the smallest generally usable `02.mp4`, use video `64 kbps` plus embedded audio `32 kbps`.
 If the requested video target is too small, the pipeline automatically lowers audio bitrate first, then preserves an automatic video quality floor derived from the source bitrate and resolution, and only then falls back to minimum safe audio/video bitrates instead of failing the whole run.
 If `audio.target_size_ratio` is greater than 0, `03.mp3` derives its MP3 bitrate from duration and the target size.
+If `audio.target_bitrate_kbps` is greater than 0, `03.mp3` uses that explicit MP3 bitrate instead of deriving one from size.
+For the smallest generally usable `03.mp3`, use `32 kbps`.
 If the requested audio target is too small, the pipeline automatically falls back to the minimum 32 kbps MP3 bitrate instead of failing.
 
 You can also override from the command line:
@@ -128,7 +135,7 @@ You can also override from the command line:
     --asr-provider azure-speech
 
 
-2.3 Video summaries: Azure OpenAI
+2.3 Overview and segment translation: Azure OpenAI
 
 Configure in `pipeline_config.json`:
 
@@ -151,8 +158,9 @@ Or set environment variables:
     $env:AZURE_OPENAI_API_KEY = "your-key"
     $env:AZURE_OPENAI_DEPLOYMENT = "gpt-5.4-mini"
 
-The pipeline calls Azure OpenAI once per video, using the full subtitle corpus to generate one concise Chinese overview.
-It does not call the model per segment.
+The pipeline calls Azure OpenAI once per video to generate one concise Chinese overview.
+When a workbook is generated, it also batches segment text into one or more translation requests and writes the Chinese results into the `分视频文本（中文）` column.
+It does not call the model one request per segment.
 When `overview.difficulty` is empty in config, the pipeline auto-estimates subtitle difficulty on a numeric `1-5` scale using sentence length, clause density, and word complexity.
 
 
@@ -176,6 +184,16 @@ Target-size export example:
       --output-dir "C:\video-analysis\output\job-001_review" `
   --video-target-size-ratio 0.0833 `
   --audio-target-size-ratio 0.4380
+
+Explicit bitrate export example:
+
+    py run_pipeline.py single `
+      --source-mp4 "C:\video-analysis\input\job-001\02.mp4" `
+      --source-srt "C:\video-analysis\input\job-001\02.srt" `
+      --output-dir "C:\video-analysis\output\job-001_review" `
+      --video-target-size-ratio 64 `
+      --video-audio-bitrate-kbps 32 `
+      --audio-target-size-ratio 32
 
 3.2 Auto-discover sidecar SRT
 
@@ -204,7 +222,7 @@ If the output folder already exists and you only want to regenerate the overview
     py run_pipeline.py single-overview `
       --output-dir "C:\video-analysis\output\job-001_review"
 
-This reads the existing `manifest.json` and `segments.json`, calls Azure OpenAI once for that video, and rebuilds `dubbing.result.xlsx`.
+This reads the existing `manifest.json` and `segments.json`, refreshes the Azure OpenAI overview and segment translations for that video, and rebuilds `dubbing.result.xlsx`.
 
 
 4. Batch Workflow

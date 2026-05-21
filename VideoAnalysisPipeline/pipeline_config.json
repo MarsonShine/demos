@@ -38,6 +38,7 @@
   },
   "video": {
     "target_size_ratio": 0.0,
+    "target_bitrate_kbps": 0,
     "audio_bitrate_kbps": 128
   },
   "audio": {
@@ -46,6 +47,7 @@
     "demucs_device": "cpu",
     "mp3_bitrate_kbps": 192,
     "target_size_ratio": 0.0,
+    "target_bitrate_kbps": 0,
     "jobs": 0,
     "cache_enabled": true,
     "cache_dir": ".video_pipeline_cache\\bgm"

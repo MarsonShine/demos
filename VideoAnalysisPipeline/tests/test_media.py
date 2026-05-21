@@ -157,6 +157,41 @@ class MediaTests(unittest.TestCase):
             self.assertEqual(output_audio.read_bytes(), b"bgm-bytes")
 
     @patch("video_analysis_pipeline.media.probe_media")
+    @patch("video_analysis_pipeline.media.subprocess.run")
+    def test_extract_background_audio_mp3_uses_explicit_target_bitrate(
+        self,
+        mock_run: object,
+        mock_probe_media: object,
+    ) -> None:
+        mock_probe_media.return_value = MediaMetadata(path="analysis.mp3", duration_ms=240_000, video_streams=0, audio_streams=1)
+
+        def fake_run(args: list[str], capture_output: bool, check: bool) -> subprocess.CompletedProcess[bytes]:
+            self.assertEqual(args[args.index("--mp3-bitrate") + 1], "64")
+            output_root = Path(args[args.index("-o") + 1])
+            model_name = args[args.index("-n") + 1]
+            source_audio = Path(args[-1])
+            accompaniment_path = output_root / model_name / source_audio.stem / "no_vocals.mp3"
+            accompaniment_path.parent.mkdir(parents=True, exist_ok=True)
+            accompaniment_path.write_bytes(b"bgm-bytes")
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout=b"", stderr=b"")
+
+        mock_run.side_effect = fake_run
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            source_audio = Path(tmp_dir) / "analysis.mp3"
+            output_audio = Path(tmp_dir) / "03.mp3"
+            source_audio.write_bytes(b"x" * (5000 * 1024))
+
+            result = extract_background_audio_mp3(
+                source_audio,
+                output_audio,
+                AudioConfig(target_bitrate_kbps=64),
+            )
+
+            self.assertEqual(result.path, output_audio)
+            self.assertEqual(output_audio.read_bytes(), b"bgm-bytes")
+
+    @patch("video_analysis_pipeline.media.probe_media")
     @patch("video_analysis_pipeline.media.run_command")
     def test_copy_source_video_transcodes_when_target_size_is_configured(
         self,
@@ -240,7 +275,7 @@ class MediaTests(unittest.TestCase):
 
     @patch("video_analysis_pipeline.media.probe_media")
     @patch("video_analysis_pipeline.media.run_command")
-    def test_copy_source_video_preserves_resolution_based_quality_floor(
+    def test_copy_source_video_downscales_when_target_bitrate_cannot_support_source_resolution(
         self,
         mock_run_command: object,
         mock_probe_media: object,
@@ -256,7 +291,8 @@ class MediaTests(unittest.TestCase):
 
         def fake_run_command(args: list[str]) -> subprocess.CompletedProcess[str]:
             self.assertEqual(args[args.index("-b:a") + 1], "32k")
-            self.assertEqual(args[args.index("-b:v") + 1], "293k")
+            self.assertEqual(args[args.index("-b:v") + 1], "64k")
+            self.assertEqual(args[args.index("-vf") + 1], "scale=384:216:flags=lanczos")
             Path(args[-1]).write_bytes(b"compressed-video")
             return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
 
@@ -274,7 +310,7 @@ class MediaTests(unittest.TestCase):
 
     @patch("video_analysis_pipeline.media.probe_media")
     @patch("video_analysis_pipeline.media.run_command")
-    def test_copy_source_video_preserves_small_source_video_bitrate_floor(
+    def test_copy_source_video_downscales_small_source_video_instead_of_raising_target_size(
         self,
         mock_run_command: object,
         mock_probe_media: object,
@@ -290,7 +326,8 @@ class MediaTests(unittest.TestCase):
 
         def fake_run_command(args: list[str]) -> subprocess.CompletedProcess[str]:
             self.assertEqual(args[args.index("-b:a") + 1], "32k")
-            self.assertEqual(args[args.index("-b:v") + 1], "184k")
+            self.assertEqual(args[args.index("-b:v") + 1], "64k")
+            self.assertEqual(args[args.index("-vf") + 1], "scale=384:216:flags=lanczos")
             Path(args[-1]).write_bytes(b"compressed-video")
             return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
 
@@ -305,6 +342,56 @@ class MediaTests(unittest.TestCase):
 
             self.assertEqual(result, output_video)
             self.assertEqual(output_video.read_bytes(), b"compressed-video")
+
+    @patch("video_analysis_pipeline.media.probe_media")
+    @patch("video_analysis_pipeline.media.run_command")
+    def test_copy_source_video_clamps_explicit_video_bitrate_to_minimum_usable_floor(self, mock_run_command: object, mock_probe_media: object) -> None:
+        mock_probe_media.return_value = MediaMetadata(
+            path="source.mp4",
+            duration_ms=60_000,
+            video_streams=1,
+            audio_streams=1,
+            width=854,
+            height=480,
+        )
+
+        def fake_run_command(args: list[str]) -> subprocess.CompletedProcess[str]:
+            self.assertEqual(args[args.index("-b:a") + 1], "32k")
+            self.assertEqual(args[args.index("-b:v") + 1], "64k")
+            self.assertEqual(args[args.index("-vf") + 1], "scale=384:216:flags=lanczos")
+            Path(args[-1]).write_bytes(b"compressed-video")
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+        mock_run_command.side_effect = fake_run_command
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            source_video = Path(tmp_dir) / "source.mp4"
+            output_video = Path(tmp_dir) / "02.mp4"
+            source_video.write_bytes(b"x" * (3000 * 1024))
+
+            result = copy_source_video(source_video, output_video, VideoOutputConfig(target_bitrate_kbps=32, audio_bitrate_kbps=32))
+
+            self.assertEqual(result, output_video)
+            self.assertEqual(output_video.read_bytes(), b"compressed-video")
+
+    @patch("video_analysis_pipeline.media.probe_media")
+    @patch("video_analysis_pipeline.media.run_command")
+    def test_copy_source_video_copies_source_without_transcoding_when_no_target_ratio_or_bitrate_is_requested(
+        self,
+        mock_run_command: object,
+        mock_probe_media: object,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            source_video = Path(tmp_dir) / "source.mp4"
+            output_video = Path(tmp_dir) / "02.mp4"
+            source_video.write_bytes(b"original-video")
+
+            result = copy_source_video(source_video, output_video, VideoOutputConfig(audio_bitrate_kbps=128))
+
+            self.assertEqual(result, output_video)
+            self.assertEqual(output_video.read_bytes(), b"original-video")
+            mock_probe_media.assert_not_called()
+            mock_run_command.assert_not_called()
 
     @patch("video_analysis_pipeline.media.subprocess.run")
     def test_extract_background_audio_mp3_reuses_cache(self, mock_run: object) -> None:

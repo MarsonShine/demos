@@ -12,7 +12,7 @@ from video_analysis_pipeline.models import OverviewRow, Segment
 
 
 OVERVIEW_HEADERS = ["学段", "科目", "序号", "电影名称", "视频标题", "静音视频", "完整视频", "背景音频", "视频封图", "视频简介", "难易程度", "人机对话音频", "话题", "来源"]
-SEGMENT_HEADERS = ["序号", "分视频序号", "分视频文本", "起始时间", "结束时间"]
+SEGMENT_HEADERS = ["序号", "分视频序号", "分视频文本", "分视频文本（中文）", "起始时间", "结束时间"]
 
 
 def write_json(path: Path, payload: object) -> Path:
@@ -25,7 +25,7 @@ def write_json(path: Path, payload: object) -> Path:
 
 def export_csv(
     output_path: Path,
-    rows: Iterable[tuple[int, int, str, str, str]],
+    rows: Iterable[tuple[object, ...]],
 ) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8-sig", newline="") as handle:
@@ -37,7 +37,7 @@ def export_csv(
 
 def export_workbook(
     output_path: Path,
-    rows: Iterable[tuple[int, int, str, str, str]],
+    rows: Iterable[tuple[object, ...]],
     overview_rows: Iterable[OverviewRow] | None = None,
     template_path: Path | None = None,
 ) -> Path:
@@ -93,7 +93,7 @@ def _write_sheet(
         row_index += 1
 
 
-def segments_to_rows(segments: list[Segment]) -> list[tuple[int, int, str, str, str]]:
+def segments_to_rows(segments: list[Segment]) -> list[tuple[object, ...]]:
     return [segment.to_excel_row() for segment in segments]
 
 

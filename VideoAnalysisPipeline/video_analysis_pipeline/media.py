@@ -27,6 +27,7 @@ MIN_AUDIO_BITRATE_KBPS = 32
 MIN_VIDEO_BITRATE_KBPS = 64
 AUTO_SOURCE_AUDIO_SHARE_RATIO = 0.25
 AUTO_VIDEO_FLOOR_PIXELS_PER_KBPS = 1400
+AUTO_STANDARD_SHORT_EDGES = (2160, 1440, 1080, 900, 720, 576, 540, 480, 432, 360, 288, 270, 240, 216, 180, 144)
 
 
 @dataclass(slots=True)
@@ -132,6 +133,23 @@ def _estimate_target_size_kb(duration_ms: int, bitrate_kbps: int) -> int:
     return math.ceil((bitrate_kbps * duration_ms) / (8192 * TARGET_SIZE_SAFETY_RATIO))
 
 
+def _resolve_minimum_viable_video_target_size_kb(metadata: MediaMetadata) -> int:
+    minimum_total_bitrate_kbps = MIN_VIDEO_BITRATE_KBPS
+    if metadata.audio_streams > 0:
+        minimum_total_bitrate_kbps += MIN_AUDIO_BITRATE_KBPS
+    return _estimate_target_size_kb(duration_ms=metadata.duration_ms, bitrate_kbps=minimum_total_bitrate_kbps)
+
+
+def _resolve_video_target_size_kb(
+    config: VideoOutputConfig,
+    metadata: MediaMetadata,
+    source_size_kb: float,
+) -> int | None:
+    if config.target_size_ratio > 0:
+        return max(1, round(source_size_kb * config.target_size_ratio))
+    return None
+
+
 def _warn_target_size_adjustment(message: str) -> None:
     print(f"WARNING: {message}", file=sys.stderr)
 
@@ -158,32 +176,61 @@ def _format_video_resolution(metadata: MediaMetadata) -> str:
     return "unknown resolution"
 
 
-def _resolve_auto_min_video_bitrate_kbps(
-    config: VideoOutputConfig,
+def _round_even(value: float) -> int:
+    rounded = int(value)
+    if rounded % 2 != 0:
+        rounded -= 1
+    return max(2, rounded)
+
+
+def _resolve_auto_video_scale(
     metadata: MediaMetadata,
-    source_size_kb: float,
-) -> int:
-    source_total_bitrate_kbps = _estimate_media_bitrate_kbps(
-        size_kb=source_size_kb,
-        duration_ms=metadata.duration_ms,
-        label="source video",
-    )
-    source_audio_bitrate_kbps = _estimate_source_audio_bitrate_kbps(
-        source_total_bitrate_kbps=source_total_bitrate_kbps,
-        preferred_audio_bitrate_kbps=config.audio_bitrate_kbps,
-        has_audio=metadata.audio_streams > 0,
-    )
-    source_video_bitrate_kbps = max(MIN_VIDEO_BITRATE_KBPS, source_total_bitrate_kbps - source_audio_bitrate_kbps)
-    resolution_floor_kbps = MIN_VIDEO_BITRATE_KBPS
-    if metadata.width and metadata.height:
-        resolution_floor_kbps = max(
-            MIN_VIDEO_BITRATE_KBPS,
-            math.ceil((metadata.width * metadata.height) / AUTO_VIDEO_FLOOR_PIXELS_PER_KBPS),
-        )
-    return max(MIN_VIDEO_BITRATE_KBPS, min(source_video_bitrate_kbps, resolution_floor_kbps))
+    video_bitrate_kbps: int,
+) -> tuple[int, int] | None:
+    if not metadata.width or not metadata.height:
+        return None
+
+    source_width = metadata.width
+    source_height = metadata.height
+    source_pixels = source_width * source_height
+    max_pixels = max(MIN_VIDEO_BITRATE_KBPS, video_bitrate_kbps) * AUTO_VIDEO_FLOOR_PIXELS_PER_KBPS
+    if source_pixels <= max_pixels:
+        return None
+
+    is_landscape = source_width >= source_height
+    source_short_edge = source_height if is_landscape else source_width
+    source_long_edge = source_width if is_landscape else source_height
+
+    for short_edge in AUTO_STANDARD_SHORT_EDGES:
+        if short_edge >= source_short_edge:
+            continue
+        scale_ratio = short_edge / source_short_edge
+        target_short_edge = _round_even(short_edge)
+        target_long_edge = _round_even(source_long_edge * scale_ratio)
+        if target_short_edge * target_long_edge > max_pixels:
+            continue
+        if is_landscape:
+            return target_long_edge, target_short_edge
+        return target_short_edge, target_long_edge
+
+    scale_ratio = math.sqrt(max_pixels / source_pixels)
+    target_width = _round_even(source_width * scale_ratio)
+    target_height = _round_even(source_height * scale_ratio)
+    if target_width >= source_width and target_height >= source_height:
+        return None
+    return target_width, target_height
 
 
 def _resolve_background_audio_bitrate_kbps(config: AudioConfig, source_size_kb: float, duration_ms: int) -> int:
+    if config.target_bitrate_kbps > 0:
+        if config.target_bitrate_kbps < MIN_AUDIO_BITRATE_KBPS:
+            _warn_target_size_adjustment(
+                f"requested background-audio bitrate {config.target_bitrate_kbps} kbps is below the minimum usable "
+                f"{MIN_AUDIO_BITRATE_KBPS} kbps; using {MIN_AUDIO_BITRATE_KBPS} kbps instead."
+            )
+            return MIN_AUDIO_BITRATE_KBPS
+        return config.target_bitrate_kbps
+
     if config.target_size_ratio > 0:
         target_size_kb = max(1, round(source_size_kb * config.target_size_ratio))
         bitrate_kbps = _estimate_target_bitrate_kbps(
@@ -203,63 +250,114 @@ def _resolve_background_audio_bitrate_kbps(config: AudioConfig, source_size_kb: 
     return config.mp3_bitrate_kbps
 
 
+def _resolve_requested_video_bitrate_kbps(config: VideoOutputConfig, metadata: MediaMetadata) -> int:
+    if config.target_bitrate_kbps < MIN_VIDEO_BITRATE_KBPS:
+        _warn_target_size_adjustment(
+            f"requested video bitrate {config.target_bitrate_kbps} kbps is below the minimum usable "
+            f"{MIN_VIDEO_BITRATE_KBPS} kbps; using {MIN_VIDEO_BITRATE_KBPS} kbps and auto downscaling "
+            f"from {_format_video_resolution(metadata)} if needed instead."
+        )
+        return MIN_VIDEO_BITRATE_KBPS
+    return config.target_bitrate_kbps
+
+
+def _transcode_source_video(
+    source_path: Path,
+    target_path: Path,
+    source_metadata: MediaMetadata,
+    video_bitrate_kbps: int,
+    audio_bitrate_kbps: int,
+) -> Path:
+    scaled_resolution = _resolve_auto_video_scale(source_metadata, video_bitrate_kbps)
+    actual_target_path = target_path
+    if source_path.resolve() == target_path.resolve():
+        actual_target_path = target_path.with_name(f"{target_path.stem}.transcoding{target_path.suffix}")
+
+    command = [
+        "ffmpeg",
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        str(source_path),
+        "-c:v",
+        "libx264",
+        "-preset",
+        "slow",
+        "-pix_fmt",
+        "yuv420p",
+        "-b:v",
+        f"{video_bitrate_kbps}k",
+        "-maxrate",
+        f"{video_bitrate_kbps}k",
+        "-bufsize",
+        f"{max(video_bitrate_kbps * 2, video_bitrate_kbps)}k",
+    ]
+    if scaled_resolution is not None:
+        scaled_width, scaled_height = scaled_resolution
+        command.extend(["-vf", f"scale={scaled_width}:{scaled_height}:flags=lanczos"])
+    if audio_bitrate_kbps > 0:
+        command.extend(["-c:a", "aac", "-b:a", f"{audio_bitrate_kbps}k"])
+    else:
+        command.append("-an")
+    command.extend(["-movflags", "+faststart", str(actual_target_path)])
+    run_command(command)
+    if actual_target_path != target_path:
+        actual_target_path.replace(target_path)
+    return target_path
+
+
 def _resolve_video_export_bitrates_kbps(
     config: VideoOutputConfig,
     metadata: MediaMetadata,
     target_size_kb: int,
-    source_size_kb: float,
 ) -> tuple[int, int]:
     total_bitrate_kbps = _estimate_target_bitrate_kbps(
         target_size_kb=target_size_kb,
         duration_ms=metadata.duration_ms,
         label="video",
     )
-    auto_min_video_bitrate_kbps = _resolve_auto_min_video_bitrate_kbps(
-        config=config,
-        metadata=metadata,
-        source_size_kb=source_size_kb,
-    )
 
     if metadata.audio_streams > 0:
         video_bitrate_kbps = total_bitrate_kbps - config.audio_bitrate_kbps
-        if video_bitrate_kbps >= auto_min_video_bitrate_kbps:
+        if video_bitrate_kbps >= MIN_VIDEO_BITRATE_KBPS:
             return video_bitrate_kbps, config.audio_bitrate_kbps
 
-        adjusted_audio_bitrate_kbps = total_bitrate_kbps - auto_min_video_bitrate_kbps
+        adjusted_audio_bitrate_kbps = total_bitrate_kbps - MIN_VIDEO_BITRATE_KBPS
         if adjusted_audio_bitrate_kbps >= MIN_AUDIO_BITRATE_KBPS:
             _warn_target_size_adjustment(
                 f"video target_size_kb={target_size_kb} is too small for configured audio bitrate "
                 f"{config.audio_bitrate_kbps} kbps; lowering audio bitrate to "
-                f"{adjusted_audio_bitrate_kbps} kbps to preserve auto video quality floor "
-                f"{auto_min_video_bitrate_kbps} kbps."
+                f"{adjusted_audio_bitrate_kbps} kbps to preserve the minimum video bitrate "
+                f"{MIN_VIDEO_BITRATE_KBPS} kbps before auto downscaling."
             )
-            return auto_min_video_bitrate_kbps, adjusted_audio_bitrate_kbps
+            return MIN_VIDEO_BITRATE_KBPS, adjusted_audio_bitrate_kbps
 
         minimum_total_size_kb = _estimate_target_size_kb(
             duration_ms=metadata.duration_ms,
-            bitrate_kbps=auto_min_video_bitrate_kbps + MIN_AUDIO_BITRATE_KBPS,
+            bitrate_kbps=MIN_VIDEO_BITRATE_KBPS + MIN_AUDIO_BITRATE_KBPS,
         )
         _warn_target_size_adjustment(
             f"video target_size_kb={target_size_kb} is too small for duration {metadata.duration_ms}ms "
-            f"with audio; preserving auto video quality floor {auto_min_video_bitrate_kbps} kbps "
-            f"for {_format_video_resolution(metadata)} and using minimum audio bitrate "
-            f"{MIN_AUDIO_BITRATE_KBPS} kbps audio instead "
+            f"with audio; using minimum video bitrate {MIN_VIDEO_BITRATE_KBPS} kbps and minimum audio bitrate "
+            f"{MIN_AUDIO_BITRATE_KBPS} kbps, then auto downscaling from {_format_video_resolution(metadata)} if needed "
             f"(estimated output size about {minimum_total_size_kb} KB)."
         )
-        return auto_min_video_bitrate_kbps, MIN_AUDIO_BITRATE_KBPS
+        return MIN_VIDEO_BITRATE_KBPS, MIN_AUDIO_BITRATE_KBPS
 
-    if total_bitrate_kbps < auto_min_video_bitrate_kbps:
+    if total_bitrate_kbps < MIN_VIDEO_BITRATE_KBPS:
         minimum_video_size_kb = _estimate_target_size_kb(
             duration_ms=metadata.duration_ms,
-            bitrate_kbps=auto_min_video_bitrate_kbps,
+            bitrate_kbps=MIN_VIDEO_BITRATE_KBPS,
         )
         _warn_target_size_adjustment(
             f"video target_size_kb={target_size_kb} is too small for duration {metadata.duration_ms}ms; "
-            f"preserving auto video quality floor {auto_min_video_bitrate_kbps} kbps "
-            f"for {_format_video_resolution(metadata)} instead "
+            f"using minimum video bitrate {MIN_VIDEO_BITRATE_KBPS} kbps and auto downscaling "
+            f"from {_format_video_resolution(metadata)} if needed instead "
             f"(estimated output size about {minimum_video_size_kb} KB)."
         )
-        return auto_min_video_bitrate_kbps, 0
+        return MIN_VIDEO_BITRATE_KBPS, 0
     return total_bitrate_kbps, 0
 
 
@@ -267,50 +365,30 @@ def copy_source_video(source_path: Path, target_path: Path, config: VideoOutputC
     target_path.parent.mkdir(parents=True, exist_ok=True)
     if config is not None:
         config.validate()
-    if config is not None and config.target_size_ratio > 0:
-        source_size_kb = source_path.stat().st_size / 1024
-        target_size_kb = max(1, round(source_size_kb * config.target_size_ratio))
+    if config is not None and (config.target_size_ratio > 0 or config.target_bitrate_kbps > 0):
         source_metadata = probe_media(source_path)
-        video_bitrate_kbps, audio_bitrate_kbps = _resolve_video_export_bitrates_kbps(
-            config,
-            source_metadata,
-            target_size_kb,
-            source_size_kb,
-        )
-        actual_target_path = target_path
-        if source_path.resolve() == target_path.resolve():
-            actual_target_path = target_path.with_name(f"{target_path.stem}.transcoding{target_path.suffix}")
-
-        command = [
-            "ffmpeg",
-            "-y",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-i",
-            str(source_path),
-            "-c:v",
-            "libx264",
-            "-preset",
-            "medium",
-            "-pix_fmt",
-            "yuv420p",
-            "-b:v",
-            f"{video_bitrate_kbps}k",
-            "-maxrate",
-            f"{video_bitrate_kbps}k",
-            "-bufsize",
-            f"{max(video_bitrate_kbps * 2, video_bitrate_kbps)}k",
-        ]
-        if audio_bitrate_kbps > 0:
-            command.extend(["-c:a", "aac", "-b:a", f"{audio_bitrate_kbps}k"])
+        if config.target_bitrate_kbps > 0:
+            video_bitrate_kbps = _resolve_requested_video_bitrate_kbps(config, source_metadata)
+            audio_bitrate_kbps = config.audio_bitrate_kbps if source_metadata.audio_streams > 0 else 0
         else:
-            command.append("-an")
-        command.extend(["-movflags", "+faststart", str(actual_target_path)])
-        run_command(command)
-        if actual_target_path != target_path:
-            actual_target_path.replace(target_path)
-        return target_path
+            source_size_kb = source_path.stat().st_size / 1024
+            target_size_kb = _resolve_video_target_size_kb(config, source_metadata, source_size_kb)
+            if target_size_kb is None:
+                if source_path.resolve() != target_path.resolve():
+                    shutil.copy2(source_path, target_path)
+                return target_path
+            video_bitrate_kbps, audio_bitrate_kbps = _resolve_video_export_bitrates_kbps(
+                config,
+                source_metadata,
+                target_size_kb,
+            )
+        return _transcode_source_video(
+            source_path=source_path,
+            target_path=target_path,
+            source_metadata=source_metadata,
+            video_bitrate_kbps=video_bitrate_kbps,
+            audio_bitrate_kbps=audio_bitrate_kbps,
+        )
 
     if source_path.resolve() != target_path.resolve():
         shutil.copy2(source_path, target_path)
