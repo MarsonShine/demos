@@ -43,6 +43,7 @@ _SKIP_STEP_TO_FIELD = {
 }
 
 _BITRATE_PATTERN = re.compile(r"^(?P<value>\d+(?:\.\d+)?)\s*(?P<unit>k|kbps)?$", re.IGNORECASE)
+_FRAME_SIZE_PATTERN = re.compile(r"^(?P<width>\d+)\s*[xX]\s*(?P<height>\d+)$")
 
 
 def add_resume_arg(parser: argparse.ArgumentParser) -> None:
@@ -86,6 +87,36 @@ def add_export_size_args(parser: argparse.ArgumentParser) -> None:
             "Optional embedded AAC bitrate in kbps for the audio track inside exported 02.mp4. "
             "For the smallest generally usable 02.mp4, use 32."
         ),
+    )
+    parser.add_argument(
+        "--video-frame-size",
+        type=str,
+        default=None,
+        help="Optional explicit 02.mp4 frame size in WIDTHxHEIGHT form, for example 1280x720.",
+    )
+    parser.add_argument(
+        "--video-fps",
+        type=float,
+        default=None,
+        help="Optional explicit 02.mp4 frame rate, for example 25.",
+    )
+    parser.add_argument(
+        "--video-audio-sample-rate-hz",
+        type=int,
+        default=None,
+        help="Optional embedded AAC sample rate for 02.mp4, for example 44100.",
+    )
+    parser.add_argument(
+        "--video-audio-channels",
+        type=int,
+        default=None,
+        help="Optional embedded AAC channel count for 02.mp4, for example 2 for stereo.",
+    )
+    parser.add_argument(
+        "--video-audio-bit-depth",
+        type=int,
+        default=None,
+        help="Optional embedded AAC sample size hint for 02.mp4. Currently 32 is supported.",
     )
     parser.add_argument(
         "--audio-target-size-ratio",
@@ -256,6 +287,13 @@ def resolve_video_target_size_ratio(value: str) -> tuple[float, int]:
     return _resolve_ratio_or_bitrate(value, "video-target-size-ratio")
 
 
+def resolve_video_frame_size(value: str) -> tuple[int, int]:
+    match = _FRAME_SIZE_PATTERN.fullmatch(value.strip())
+    if match is None:
+        raise ValueError("video-frame-size must use WIDTHxHEIGHT format, for example 1280x720.")
+    return int(match.group("width")), int(match.group("height"))
+
+
 def resolve_audio_target_size_ratio(value: str) -> tuple[float, int]:
     return _resolve_ratio_or_bitrate(value, "audio-target-size-ratio")
 
@@ -289,6 +327,21 @@ def main(argv: list[str] | None = None) -> int:
         video_audio_bitrate_kbps = getattr(args, "video_audio_bitrate_kbps", None)
         if video_audio_bitrate_kbps is not None:
             config.video.audio_bitrate_kbps = video_audio_bitrate_kbps
+        video_frame_size = getattr(args, "video_frame_size", None)
+        if video_frame_size is not None:
+            config.video.frame_width, config.video.frame_height = resolve_video_frame_size(video_frame_size)
+        video_fps = getattr(args, "video_fps", None)
+        if video_fps is not None:
+            config.video.frame_rate = video_fps
+        video_audio_sample_rate_hz = getattr(args, "video_audio_sample_rate_hz", None)
+        if video_audio_sample_rate_hz is not None:
+            config.video.audio_sample_rate_hz = video_audio_sample_rate_hz
+        video_audio_channels = getattr(args, "video_audio_channels", None)
+        if video_audio_channels is not None:
+            config.video.audio_channels = video_audio_channels
+        video_audio_bit_depth = getattr(args, "video_audio_bit_depth", None)
+        if video_audio_bit_depth is not None:
+            config.video.audio_bit_depth = video_audio_bit_depth
         audio_target_size_ratio = getattr(args, "audio_target_size_ratio", None)
         if audio_target_size_ratio is not None:
             resolved_audio_target_ratio, resolved_audio_target_bitrate = resolve_audio_target_size_ratio(audio_target_size_ratio)

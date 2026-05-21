@@ -25,6 +25,7 @@ SILENCE_END_PATTERN = re.compile(
 TARGET_SIZE_SAFETY_RATIO = 0.985
 MIN_AUDIO_BITRATE_KBPS = 32
 MIN_VIDEO_BITRATE_KBPS = 64
+DEFAULT_VIDEO_AUDIO_BITRATE_KBPS = 128
 AUTO_SOURCE_AUDIO_SHARE_RATIO = 0.25
 AUTO_VIDEO_FLOOR_PIXELS_PER_KBPS = 1400
 AUTO_STANDARD_SHORT_EDGES = (2160, 1440, 1080, 900, 720, 576, 540, 480, 432, 360, 288, 270, 240, 216, 180, 144)
@@ -32,9 +33,10 @@ AUTO_STANDARD_SHORT_EDGES = (2160, 1440, 1080, 900, 720, 576, 540, 480, 432, 360
 
 @dataclass(slots=True)
 class BackgroundAudioResult:
-    path: Path
+    path: Path | None
     from_cache: bool
     cache_path: Path | None = None
+    source_path: Path | None = None
 
 
 def _decode_subprocess_output(output: bytes | str | None) -> str:
@@ -261,14 +263,68 @@ def _resolve_requested_video_bitrate_kbps(config: VideoOutputConfig, metadata: M
     return config.target_bitrate_kbps
 
 
+def _format_numeric_cli_value(value: float) -> str:
+    if float(value).is_integer():
+        return str(int(value))
+    return str(value)
+
+
+def _resolve_explicit_video_filter(config: VideoOutputConfig) -> str:
+    return (
+        f"scale={config.frame_width}:{config.frame_height}:force_original_aspect_ratio=decrease:flags=lanczos,"
+        f"pad={config.frame_width}:{config.frame_height}:(ow-iw)/2:(oh-ih)/2"
+    )
+
+
+def _resolve_video_filter(config: VideoOutputConfig, source_metadata: MediaMetadata, video_bitrate_kbps: int) -> str:
+    if config.frame_width > 0 and config.frame_height > 0:
+        return _resolve_explicit_video_filter(config)
+
+    scaled_resolution = _resolve_auto_video_scale(source_metadata, video_bitrate_kbps)
+    if scaled_resolution is None:
+        return ""
+
+    scaled_width, scaled_height = scaled_resolution
+    return f"scale={scaled_width}:{scaled_height}:flags=lanczos"
+
+
+def _resolve_aac_sample_format(audio_bit_depth: int) -> str:
+    if audio_bit_depth == 32:
+        return "fltp"
+    raise ValueError(f"Unsupported AAC audio bit depth: {audio_bit_depth}")
+
+
+def _has_explicit_video_export_overrides(config: VideoOutputConfig) -> bool:
+    return any(
+        (
+            config.frame_width > 0,
+            config.frame_height > 0,
+            config.frame_rate > 0,
+            config.audio_sample_rate_hz > 0,
+            config.audio_channels > 0,
+            config.audio_bit_depth > 0,
+        )
+    )
+
+
+def _requires_video_transcode(config: VideoOutputConfig) -> bool:
+    return (
+        config.target_size_ratio > 0
+        or config.target_bitrate_kbps > 0
+        or config.audio_bitrate_kbps != DEFAULT_VIDEO_AUDIO_BITRATE_KBPS
+        or _has_explicit_video_export_overrides(config)
+    )
+
+
 def _transcode_source_video(
     source_path: Path,
     target_path: Path,
+    config: VideoOutputConfig,
     source_metadata: MediaMetadata,
     video_bitrate_kbps: int,
     audio_bitrate_kbps: int,
 ) -> Path:
-    scaled_resolution = _resolve_auto_video_scale(source_metadata, video_bitrate_kbps)
+    video_filter = _resolve_video_filter(config, source_metadata, video_bitrate_kbps)
     actual_target_path = target_path
     if source_path.resolve() == target_path.resolve():
         actual_target_path = target_path.with_name(f"{target_path.stem}.transcoding{target_path.suffix}")
@@ -294,11 +350,18 @@ def _transcode_source_video(
         "-bufsize",
         f"{max(video_bitrate_kbps * 2, video_bitrate_kbps)}k",
     ]
-    if scaled_resolution is not None:
-        scaled_width, scaled_height = scaled_resolution
-        command.extend(["-vf", f"scale={scaled_width}:{scaled_height}:flags=lanczos"])
+    if video_filter:
+        command.extend(["-vf", video_filter])
+    if config.frame_rate > 0:
+        command.extend(["-r", _format_numeric_cli_value(config.frame_rate)])
     if audio_bitrate_kbps > 0:
         command.extend(["-c:a", "aac", "-b:a", f"{audio_bitrate_kbps}k"])
+        if config.audio_sample_rate_hz > 0:
+            command.extend(["-ar", str(config.audio_sample_rate_hz)])
+        if config.audio_channels > 0:
+            command.extend(["-ac", str(config.audio_channels)])
+        if config.audio_bit_depth > 0:
+            command.extend(["-sample_fmt", _resolve_aac_sample_format(config.audio_bit_depth)])
     else:
         command.append("-an")
     command.extend(["-movflags", "+faststart", str(actual_target_path)])
@@ -365,18 +428,16 @@ def copy_source_video(source_path: Path, target_path: Path, config: VideoOutputC
     target_path.parent.mkdir(parents=True, exist_ok=True)
     if config is not None:
         config.validate()
-    if config is not None and (config.target_size_ratio > 0 or config.target_bitrate_kbps > 0):
+    if config is not None and _requires_video_transcode(config):
         source_metadata = probe_media(source_path)
+        source_size_kb = source_path.stat().st_size / 1024
         if config.target_bitrate_kbps > 0:
             video_bitrate_kbps = _resolve_requested_video_bitrate_kbps(config, source_metadata)
             audio_bitrate_kbps = config.audio_bitrate_kbps if source_metadata.audio_streams > 0 else 0
         else:
-            source_size_kb = source_path.stat().st_size / 1024
             target_size_kb = _resolve_video_target_size_kb(config, source_metadata, source_size_kb)
             if target_size_kb is None:
-                if source_path.resolve() != target_path.resolve():
-                    shutil.copy2(source_path, target_path)
-                return target_path
+                target_size_kb = max(1, round(source_size_kb))
             video_bitrate_kbps, audio_bitrate_kbps = _resolve_video_export_bitrates_kbps(
                 config,
                 source_metadata,
@@ -385,6 +446,7 @@ def copy_source_video(source_path: Path, target_path: Path, config: VideoOutputC
         return _transcode_source_video(
             source_path=source_path,
             target_path=target_path,
+            config=config,
             source_metadata=source_metadata,
             video_bitrate_kbps=video_bitrate_kbps,
             audio_bitrate_kbps=audio_bitrate_kbps,

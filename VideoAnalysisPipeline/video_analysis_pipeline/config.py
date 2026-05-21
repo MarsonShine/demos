@@ -157,6 +157,12 @@ class VideoOutputConfig:
     target_size_ratio: float = 0.0
     target_bitrate_kbps: int = 0
     audio_bitrate_kbps: int = 128
+    frame_width: int = 0
+    frame_height: int = 0
+    frame_rate: float = 0.0
+    audio_sample_rate_hz: int = 0
+    audio_channels: int = 0
+    audio_bit_depth: int = 0
 
     def validate(self) -> None:
         if self.target_size_ratio < 0:
@@ -167,6 +173,18 @@ class VideoOutputConfig:
             raise ValueError("video target_size_ratio and target_bitrate_kbps cannot both be set.")
         if self.audio_bitrate_kbps < 32:
             raise ValueError("video audio_bitrate_kbps must be at least 32.")
+        if self.frame_width < 0 or self.frame_height < 0:
+            raise ValueError("video frame_width and frame_height must be >= 0.")
+        if bool(self.frame_width) != bool(self.frame_height):
+            raise ValueError("video frame_width and frame_height must be set together.")
+        if self.frame_rate < 0:
+            raise ValueError("video frame_rate must be >= 0.")
+        if self.audio_sample_rate_hz < 0:
+            raise ValueError("video audio_sample_rate_hz must be >= 0.")
+        if self.audio_channels < 0:
+            raise ValueError("video audio_channels must be >= 0.")
+        if self.audio_bit_depth not in {0, 32}:
+            raise ValueError("video audio_bit_depth currently supports only 32-bit AAC export.")
 
 
 @dataclass(slots=True)
@@ -369,6 +387,12 @@ def load_config(path: Path) -> PipelineConfig:
         target_size_ratio=float(video_data.get("target_size_ratio", 0.0)),
         target_bitrate_kbps=int(video_data.get("target_bitrate_kbps", 0)),
         audio_bitrate_kbps=int(video_data.get("audio_bitrate_kbps", 128)),
+        frame_width=int(video_data.get("frame_width", 0)),
+        frame_height=int(video_data.get("frame_height", 0)),
+        frame_rate=float(video_data.get("frame_rate", 0.0)),
+        audio_sample_rate_hz=int(video_data.get("audio_sample_rate_hz", 0)),
+        audio_channels=int(video_data.get("audio_channels", 0)),
+        audio_bit_depth=int(video_data.get("audio_bit_depth", 0)),
     )
 
     audio_config = AudioConfig(

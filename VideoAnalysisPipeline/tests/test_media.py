@@ -376,6 +376,54 @@ class MediaTests(unittest.TestCase):
 
     @patch("video_analysis_pipeline.media.probe_media")
     @patch("video_analysis_pipeline.media.run_command")
+    def test_copy_source_video_applies_explicit_export_profile(self, mock_run_command: object, mock_probe_media: object) -> None:
+        mock_probe_media.return_value = MediaMetadata(
+            path="source.mp4",
+            duration_ms=60_000,
+            video_streams=1,
+            audio_streams=1,
+            width=1920,
+            height=1080,
+        )
+
+        def fake_run_command(args: list[str]) -> subprocess.CompletedProcess[str]:
+            self.assertEqual(args[args.index("-b:v") + 1], "2000k")
+            self.assertEqual(args[args.index("-b:a") + 1], "128k")
+            self.assertEqual(args[args.index("-vf") + 1], "scale=1280:720:force_original_aspect_ratio=decrease:flags=lanczos,pad=1280:720:(ow-iw)/2:(oh-ih)/2")
+            self.assertEqual(args[args.index("-r") + 1], "25")
+            self.assertEqual(args[args.index("-ar") + 1], "44100")
+            self.assertEqual(args[args.index("-ac") + 1], "2")
+            self.assertEqual(args[args.index("-sample_fmt") + 1], "fltp")
+            Path(args[-1]).write_bytes(b"compressed-video")
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+        mock_run_command.side_effect = fake_run_command
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            source_video = Path(tmp_dir) / "source.mp4"
+            output_video = Path(tmp_dir) / "02.mp4"
+            source_video.write_bytes(b"x" * (10_000 * 1024))
+
+            result = copy_source_video(
+                source_video,
+                output_video,
+                VideoOutputConfig(
+                    target_bitrate_kbps=2000,
+                    audio_bitrate_kbps=128,
+                    frame_width=1280,
+                    frame_height=720,
+                    frame_rate=25,
+                    audio_sample_rate_hz=44100,
+                    audio_channels=2,
+                    audio_bit_depth=32,
+                ),
+            )
+
+            self.assertEqual(result, output_video)
+            self.assertEqual(output_video.read_bytes(), b"compressed-video")
+
+    @patch("video_analysis_pipeline.media.probe_media")
+    @patch("video_analysis_pipeline.media.run_command")
     def test_copy_source_video_copies_source_without_transcoding_when_no_target_ratio_or_bitrate_is_requested(
         self,
         mock_run_command: object,

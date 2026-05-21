@@ -5,6 +5,7 @@ py run_pipeline.py single --source-mp4 "/Your/Input/source.mp4" --source-srt "/Y
 py run_pipeline.py single --source-mp4 "/Your/Input/source.mp4" --source-srt "/Your/Input/source.srt" --output-dir "/Your/Output" --video-target-size-ratio 0.0833 --audio-target-size-ratio 0.4380
 py run_pipeline.py single --source-mp4 "/Your/Input/source.mp4" --source-srt "/Your/Input/source.srt" --output-dir "/Your/Output" --video-target-size-ratio 500 --video-audio-bitrate-kbps 64 --audio-target-size-ratio 64
 py run_pipeline.py single --source-mp4 "/Your/Input/source.mp4" --source-srt "/Your/Input/source.srt" --output-dir "/Your/Output" --video-target-size-ratio 64 --video-audio-bitrate-kbps 32 --audio-target-size-ratio 32
+py run_pipeline.py single --source-mp4 "/Your/Input/source.mp4" --source-srt "/Your/Input/source.srt" --output-dir "/Your/Output" --video-target-size-ratio 2000 --video-audio-bitrate-kbps 128 --video-frame-size 1280x720 --video-fps 25 --video-audio-sample-rate-hz 44100 --video-audio-channels 2 --video-audio-bit-depth 32
 
 批量用法：
 py run_pipeline.py batch --input-root "C:\video-analysis\input" --output-root "C:\video-analysis\output"
@@ -19,6 +20,9 @@ batch 会递归扫描 input-root；每个要处理的目录必须只有一个 mp
 - 码率示例：64、128、500、64k、500kbps
 - 对 02.mp4 来说，最小可用视频码率默认按 64 kbps 处理；如果你给了更低值，工具会自动钳到 64 kbps，并在必要时继续自动降分辨率。
 --video-audio-bitrate-kbps 用来控制 02.mp4 内嵌 AAC 音轨码率；如果你想得到尽量小但仍可用的 02.mp4，建议设为 32。
+--video-frame-size 用来固定 02.mp4 输出分辨率，例如 1280x720。
+--video-fps 用来固定 02.mp4 输出帧率，例如 25。
+--video-audio-sample-rate-hz、--video-audio-channels、--video-audio-bit-depth 用来固定 02.mp4 内嵌 AAC 音轨参数；其中 32-bit 当前映射到 AAC 的 fltp 导出格式。
 --audio-target-size-ratio 现在也支持数值比例和显式 MP3 码率（kbps）：
 - 比例示例：0.4380
 - 码率示例：32、64、128、32k、128kbps
@@ -42,9 +46,24 @@ Excel 中难度值如果未手工配置，会根据字幕内容复杂度自动�
 F:\Your\Output\1
 
 推荐的视频目标大小比例是 8.33%（即原视频的 1/12），音频目标大小比例是 43.80%（即原视频的 1/2.28）。这个比例更适合原始码率正常或偏高的视频；如果你只是想直接拿到尽可能小且还能用的输出，建议直接使用：--video-target-size-ratio 1000 --video-audio-bitrate-kbps 64 --audio-target-size-ratio 64。如果目标压得很紧，工具会自动改用更低的标准分辨率来继续缩小文件，而不是只靠抬高码率保画质。如果不确定可以先试验一个视频，看看导出的视频和音频质量是否满足需求，再微调这两个比例或码率。
+如果你要尽量对齐剪映常见的 720p 导出参数，可以直接使用：--video-target-size-ratio 2000 --video-audio-bitrate-kbps 128 --video-frame-size 1280x720 --video-fps 25 --video-audio-sample-rate-hz 44100 --video-audio-channels 2 --video-audio-bit-depth 32。
 py run_pipeline.py single --source-mp4 "/Your/Input/source.mp4" --source-srt "/Your/Input/source.srt" --output-dir "/Your/Output" --video-target-size-ratio 0.0833 --audio-target-size-ratio 0.4380 --skip summary
 
 批量
 py run_pipeline.py batch --input-root "/Your/Input" --output-root "/Your/Output" --video-target-size-ratio 0.1233 --audio-target-size-ratio 0.7380 --final-output mod --resume
+
+py run_pipeline.py single `
+  --source-mp4 "E:\repositories\demos\VideoAnalysisPipeline\files\广州活动（12个）\A Fun Day Out\A Fun Day Out.mp4" `
+  --source-srt "E:\repositories\demos\VideoAnalysisPipeline\files\广州活动（12个）\A Fun Day Out\A Fun Day Out.srt" `
+  --output-dir "E:\repositories\demos\VideoAnalysisPipeline\output" `
+  --video-target-size-ratio 1000 `
+  --video-audio-bitrate-kbps 128 `
+  --video-frame-size 1280x720 `
+  --video-fps 25 `
+  --video-audio-sample-rate-hz 44100 `
+  --video-audio-channels 2 `
+  --video-audio-bit-depth 32 `
+  --audio-target-size-ratio 125 `
+  --skip summary
 
 

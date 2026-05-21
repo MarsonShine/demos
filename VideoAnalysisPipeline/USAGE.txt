@@ -20,7 +20,7 @@ This tool takes a source MP4 and optional SRT file, then generates:
 `02.mp4` and `03.mp3` also support ratio-based or bitrate-based export controls.
 When a target ratio is configured, the pipeline derives a bitrate from media duration instead of using the default copy/fixed-bitrate behavior.
 When an explicit bitrate is configured, the pipeline uses that bitrate directly.
-Video export now keeps standard H.264/AAC output but automatically downscales to a smaller standard resolution when the requested target bitrate is too tight for the source resolution.
+Video export now keeps standard H.264/AAC output, can pin frame size / frame rate / embedded AAC parameters when requested, and still automatically downscales to a smaller standard resolution when the requested target bitrate is too tight for the source resolution.
 
 
 1. Prerequisites
@@ -70,7 +70,13 @@ Background-music output config:
     "video": {
       "target_size_ratio": 0.0,
       "target_bitrate_kbps": 0,
-      "audio_bitrate_kbps": 128
+      "audio_bitrate_kbps": 128,
+      "frame_width": 0,
+      "frame_height": 0,
+      "frame_rate": 0.0,
+      "audio_sample_rate_hz": 0,
+      "audio_channels": 0,
+      "audio_bit_depth": 0
     }
 
     "audio": {
@@ -89,6 +95,10 @@ The persisted `03.mp3` file is now the accompaniment/BGM track.
 When the same source video is reprocessed with the same audio settings, the pipeline reuses the cached BGM stem instead of rerunning Demucs.
 If `video.target_size_ratio` is greater than 0, `02.mp4` is transcoded toward that source-size ratio and uses `video.audio_bitrate_kbps` as the preferred embedded AAC bitrate.
 If `video.target_bitrate_kbps` is greater than 0, `02.mp4` uses that explicit video bitrate instead of deriving one from size.
+If `video.frame_width` and `video.frame_height` are greater than 0, `02.mp4` is letterboxed or scaled into that exact output frame size without changing the H.264/AAC container choice.
+If `video.frame_rate` is greater than 0, `02.mp4` is exported at that explicit frame rate.
+If `video.audio_sample_rate_hz`, `video.audio_channels`, or `video.audio_bit_depth` are greater than 0, those values are applied to the embedded AAC track inside `02.mp4`.
+`video.audio_bit_depth` currently supports `32`, which maps to AAC `fltp` export.
 For the smallest generally usable `02.mp4`, use video `64 kbps` plus embedded audio `32 kbps`.
 If the requested video target is too small, the pipeline automatically lowers audio bitrate first, then preserves an automatic video quality floor derived from the source bitrate and resolution, and only then falls back to minimum safe audio/video bitrates instead of failing the whole run.
 If `audio.target_size_ratio` is greater than 0, `03.mp3` derives its MP3 bitrate from duration and the target size.
@@ -194,6 +204,20 @@ Explicit bitrate export example:
       --video-target-size-ratio 64 `
       --video-audio-bitrate-kbps 32 `
       --audio-target-size-ratio 32
+
+Jianying-style 720p export example:
+
+    py run_pipeline.py single `
+      --source-mp4 "C:\video-analysis\input\job-001\02.mp4" `
+      --source-srt "C:\video-analysis\input\job-001\02.srt" `
+      --output-dir "C:\video-analysis\output\job-001_review" `
+      --video-target-size-ratio 2000 `
+      --video-audio-bitrate-kbps 128 `
+      --video-frame-size 1280x720 `
+      --video-fps 25 `
+      --video-audio-sample-rate-hz 44100 `
+      --video-audio-channels 2 `
+      --video-audio-bit-depth 32
 
 3.2 Auto-discover sidecar SRT
 

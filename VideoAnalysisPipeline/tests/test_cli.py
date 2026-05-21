@@ -14,7 +14,17 @@ def _build_config_stub() -> SimpleNamespace:
         asr=SimpleNamespace(provider="faster-whisper"),
         azure_speech=SimpleNamespace(language="en-US"),
         faster_whisper=SimpleNamespace(language="en"),
-        video=SimpleNamespace(target_size_ratio=0.0, target_bitrate_kbps=0, audio_bitrate_kbps=128),
+        video=SimpleNamespace(
+            target_size_ratio=0.0,
+            target_bitrate_kbps=0,
+            audio_bitrate_kbps=128,
+            frame_width=0,
+            frame_height=0,
+            frame_rate=0.0,
+            audio_sample_rate_hz=0,
+            audio_channels=0,
+            audio_bit_depth=0,
+        ),
         audio=SimpleNamespace(target_size_ratio=0.0, target_bitrate_kbps=0),
         steps=SimpleNamespace(
             export_source_video=True,
@@ -254,6 +264,47 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         self.assertEqual(config.video.audio_bitrate_kbps, 32)
+
+    def test_single_accepts_explicit_video_export_profile_overrides(self) -> None:
+        config = _build_config_stub()
+        with patch("video_analysis_pipeline.cli.load_config", return_value=config), patch(
+            "video_analysis_pipeline.cli.process_single_video",
+            return_value=ProcessedItem(
+                sequence_no=1,
+                source_mp4=Path("E:\\tmp\\02.mp4"),
+                output_dir=Path("E:\\tmp\\output"),
+                workbook_path=Path("E:\\tmp\\output\\dubbing.result.xlsx"),
+                review_page_path=Path("E:\\tmp\\output\\review.html"),
+                segments=[],
+            ),
+        ):
+            exit_code = main(
+                [
+                    "single",
+                    "--source-mp4",
+                    "E:\\tmp\\clip.mp4",
+                    "--output-dir",
+                    "E:\\tmp\\output",
+                    "--video-frame-size",
+                    "1280x720",
+                    "--video-fps",
+                    "25",
+                    "--video-audio-sample-rate-hz",
+                    "44100",
+                    "--video-audio-channels",
+                    "2",
+                    "--video-audio-bit-depth",
+                    "32",
+                ]
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(config.video.frame_width, 1280)
+        self.assertEqual(config.video.frame_height, 720)
+        self.assertEqual(config.video.frame_rate, 25)
+        self.assertEqual(config.video.audio_sample_rate_hz, 44100)
+        self.assertEqual(config.video.audio_channels, 2)
+        self.assertEqual(config.video.audio_bit_depth, 32)
 
     def test_skip_flag_disables_specified_steps(self) -> None:
         config = _build_config_stub()

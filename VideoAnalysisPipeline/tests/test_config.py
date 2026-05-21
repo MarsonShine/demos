@@ -49,6 +49,12 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(config.video.target_size_ratio, 0.0)
             self.assertEqual(config.video.target_bitrate_kbps, 0)
             self.assertEqual(config.video.audio_bitrate_kbps, 128)
+            self.assertEqual(config.video.frame_width, 0)
+            self.assertEqual(config.video.frame_height, 0)
+            self.assertEqual(config.video.frame_rate, 0.0)
+            self.assertEqual(config.video.audio_sample_rate_hz, 0)
+            self.assertEqual(config.video.audio_channels, 0)
+            self.assertEqual(config.video.audio_bit_depth, 0)
             self.assertEqual(config.audio.method, "demucs")
             self.assertEqual(config.audio.demucs_model, "htdemucs")
             self.assertEqual(config.audio.target_size_ratio, 0.0)
@@ -99,6 +105,40 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(config.video.target_size_ratio, 0.0)
             self.assertEqual(config.video.target_bitrate_kbps, 500)
             self.assertEqual(config.video.audio_bitrate_kbps, 64)
+
+    def test_loads_explicit_video_export_profile_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "pipeline_config.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "azure_speech": {"subscription_key": "", "region": ""},
+                        "faster_whisper": {"model_size": "base.en"},
+                        "video": {
+                            "target_bitrate_kbps": 2000,
+                            "audio_bitrate_kbps": 128,
+                            "frame_width": 1280,
+                            "frame_height": 720,
+                            "frame_rate": 25,
+                            "audio_sample_rate_hz": 44100,
+                            "audio_channels": 2,
+                            "audio_bit_depth": 32,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            config = load_config(config_path)
+
+            self.assertEqual(config.video.target_bitrate_kbps, 2000)
+            self.assertEqual(config.video.audio_bitrate_kbps, 128)
+            self.assertEqual(config.video.frame_width, 1280)
+            self.assertEqual(config.video.frame_height, 720)
+            self.assertEqual(config.video.frame_rate, 25)
+            self.assertEqual(config.video.audio_sample_rate_hz, 44100)
+            self.assertEqual(config.video.audio_channels, 2)
+            self.assertEqual(config.video.audio_bit_depth, 32)
 
     def test_loads_audio_target_bitrate_kbps(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

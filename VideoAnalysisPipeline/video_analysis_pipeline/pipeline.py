@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
@@ -60,6 +61,7 @@ class BatchInputItem:
     source_mp4: Path
     source_srt: Path
     relative_dir: Path
+    source_mp3: Path | None = None
 
 
 @dataclass(slots=True)
@@ -111,6 +113,7 @@ def process_single_video(
     sequence_no: int,
     config: PipelineConfig,
     source_srt: Path | None = None,
+    source_mp3: Path | None = None,
     template_path: Path | None = None,
     workbook_output: Path | None = None,
     transcriber: Transcriber | None = None,
@@ -166,8 +169,14 @@ def process_single_video(
             "extract-analysis-audio",
             lambda: extract_audio_mp3(source_asset, Path(temp_dir) / "analysis.mp3"),
         )
-        source_cache_key_material = _build_audio_cache_key_material(source_asset)
-        if steps.export_background_audio:
+        analysis_audio_metadata = progress_tracker.run("probe-analysis-audio", lambda: probe_media(analysis_audio_path))
+        if source_mp3 is not None:
+            background_audio_result = progress_tracker.run(
+                "copy-bgm",
+                lambda: _copy_existing_background_audio(source_mp3, output_dir / "03.mp3"),
+            )
+        elif steps.export_background_audio:
+            source_cache_key_material = _build_audio_cache_key_material(source_asset)
             background_audio_result = progress_tracker.run(
                 "extract-bgm",
                 lambda: extract_background_audio_mp3(
@@ -178,12 +187,11 @@ def process_single_video(
                 ),
             )
         else:
-            background_audio_result = BackgroundAudioResult(path=output_dir / "03.mp3", from_cache=False, cache_path=None)
-        analysis_audio_metadata = progress_tracker.run("probe-analysis-audio", lambda: probe_media(analysis_audio_path))
-        if steps.export_background_audio:
+            background_audio_result = BackgroundAudioResult(path=None, from_cache=False, cache_path=None)
+        if background_audio_result.path is not None:
             audio_metadata = progress_tracker.run("probe-bgm-audio", lambda: probe_media(background_audio_result.path))
         else:
-            audio_metadata = analysis_audio_metadata
+            audio_metadata = None
         silence_ranges, non_silent_ranges = progress_tracker.run(
             "detect-silence",
             lambda: detect_silence(
@@ -271,6 +279,7 @@ def process_single_video(
             sequence_no=sequence_no,
             source_asset=source_asset,
             resolved_srt_path=resolved_srt_path,
+            audio_path=audio_path,
             asr_provider=asr_provider,
             subtitle_spans=subtitle_spans,
             alignment_summary=alignment_summary,
@@ -471,18 +480,20 @@ def discover_batch_inputs(
     for directory in directories:
         mp4_candidates = _sorted_media_files(directory, "*.mp4")
         srt_candidates = _sorted_media_files(directory, "*.srt")
+        mp3_candidates = _sorted_media_files(directory, "*.mp3")
 
         if not mp4_candidates and not srt_candidates:
             continue
 
-        if len(mp4_candidates) != 1 or len(srt_candidates) != 1:
+        if len(mp4_candidates) != 1 or len(srt_candidates) != 1 or len(mp3_candidates) > 1:
             raise RuntimeError(
-                f"Expected exactly one MP4 and one SRT in {directory}, "
-                f"found {len(mp4_candidates)} MP4 and {len(srt_candidates)} SRT."
+                f"Expected exactly one MP4, one SRT, and at most one MP3 in {directory}, "
+                f"found {len(mp4_candidates)} MP4, {len(srt_candidates)} SRT, and {len(mp3_candidates)} MP3."
             )
 
         source_mp4 = mp4_candidates[0]
         source_srt = srt_candidates[0]
+        source_mp3 = mp3_candidates[0] if mp3_candidates else None
         if source_name is not None and source_mp4.name != source_name:
             continue
         if srt_name is not None and source_srt.name != srt_name:
@@ -494,6 +505,7 @@ def discover_batch_inputs(
                 source_mp4=source_mp4,
                 source_srt=source_srt,
                 relative_dir=relative_dir,
+                source_mp3=source_mp3,
             )
         )
 
@@ -648,6 +660,7 @@ def process_batch(
                 sequence_no=sequence_no,
                 config=config,
                 source_srt=batch_item.source_srt,
+                source_mp3=batch_item.source_mp3,
                 template_path=None,
                 workbook_output=None,
                 progress_callback=on_progress,
@@ -729,7 +742,7 @@ def process_single_overview(
 
     source_asset = _resolve_existing_asset_path(existing_output.output_dir, existing_output.manifest, "source_mp4", "02.mp4")
     muted_video_path = _resolve_existing_asset_path(existing_output.output_dir, existing_output.manifest, "muted_video", "01.mp4")
-    audio_path = _resolve_existing_asset_path(existing_output.output_dir, existing_output.manifest, "audio_mp3", "03.mp3")
+    audio_path = _resolve_existing_optional_asset_path(existing_output.output_dir, existing_output.manifest, "audio_mp3", "03.mp3")
     cover_path = _resolve_existing_asset_path(existing_output.output_dir, existing_output.manifest, "cover_image", "01.jpg")
     workbook_path = workbook_output or _resolve_existing_workbook_path(existing_output.output_dir, existing_output.manifest)
     display_title = _resolve_existing_title(existing_output)
@@ -979,6 +992,7 @@ def _write_output_artifacts(
     sequence_no: int,
     source_asset: Path,
     resolved_srt_path: Path | None,
+    audio_path: Path | None,
     asr_provider: str,
     subtitle_spans: list[SubtitleSpan],
     alignment_summary: dict[str, object],
@@ -1007,7 +1021,7 @@ def _write_output_artifacts(
         {
             "sequence_no": sequence_no,
             "source_mp4": str(source_asset),
-            "audio_mp3": str((subtitle_spans_path.parent / "03.mp3").resolve()),
+            "audio_mp3": str(audio_path.resolve()) if audio_path is not None else None,
             "asr": {
                 "provider": asr_provider,
             },
@@ -1066,7 +1080,7 @@ def _build_manifest_payload(
     source_metadata: Any,
     muted_metadata: Any,
     analysis_audio_metadata: Any,
-    audio_metadata: Any,
+    audio_metadata: Any | None,
     background_audio_result: BackgroundAudioResult,
     config: PipelineConfig,
     overview_row: OverviewRow | None,
@@ -1077,15 +1091,16 @@ def _build_manifest_payload(
         "source_mp4": str(source_asset),
         "cover_image": str(cover_path),
         "muted_video": str(muted_video_path),
-        "audio_mp3": str(audio_path),
+        "audio_mp3": str(audio_path) if audio_path is not None else None,
         "audio_processing": {
             "analysis_audio_kind": "temporary-full-mix",
-            "output_audio_kind": "bgm",
-            "separation_method": config.audio.method,
-            "separation_model": config.audio.demucs_model,
-            "separation_device": config.audio.demucs_device,
+            "output_audio_kind": "bgm" if audio_path is not None else "none",
+            "separation_method": config.audio.method if audio_path is not None and background_audio_result.source_path is None else None,
+            "separation_model": config.audio.demucs_model if audio_path is not None and background_audio_result.source_path is None else None,
+            "separation_device": config.audio.demucs_device if audio_path is not None and background_audio_result.source_path is None else None,
             "from_cache": background_audio_result.from_cache,
             "cache_path": str(background_audio_result.cache_path) if background_audio_result.cache_path is not None else None,
+            "provided_source_path": str(background_audio_result.source_path) if background_audio_result.source_path is not None else None,
         },
         "asr": {
             "provider": asr_provider,
@@ -1112,7 +1127,7 @@ def _build_manifest_payload(
                 **analysis_audio_metadata.to_json(),
                 "path": None,
             },
-            "audio": audio_metadata.to_json(),
+            "audio": audio_metadata.to_json() if audio_metadata is not None else None,
         },
         "overview": overview_row.to_json() if overview_row is not None else None,
         "timings_seconds": timings,
@@ -1253,6 +1268,22 @@ def _resolve_existing_asset_path(output_dir: Path, manifest: dict[str, Any], man
     return output_dir / default_name
 
 
+def _resolve_existing_optional_asset_path(output_dir: Path, manifest: dict[str, Any], manifest_key: str, default_name: str) -> Path | None:
+    if manifest_key in manifest:
+        value = manifest.get(manifest_key)
+        if not value:
+            return None
+        candidate = Path(str(value))
+        if candidate.is_absolute():
+            return candidate
+        return output_dir / candidate
+
+    fallback_path = output_dir / default_name
+    if fallback_path.exists():
+        return fallback_path
+    return None
+
+
 def _resolve_existing_optional_path(output_dir: Path, value: object | None) -> Path | None:
     if not value:
         return None
@@ -1324,7 +1355,7 @@ def _build_overview_row(
     title: str,
     source_asset: Path,
     muted_video_path: Path,
-    audio_path: Path,
+    audio_path: Path | None,
     cover_path: Path,
     video_description: str,
     subtitle_spans: list[SubtitleSpan],
@@ -1339,7 +1370,7 @@ def _build_overview_row(
         video_title=title,
         muted_video=muted_video_path.name,
         full_video=source_asset.name,
-        background_audio=audio_path.name,
+        background_audio=audio_path.name if audio_path is not None else "",
         cover_image=cover_path.name,
         video_description=video_description,
         difficulty=config.overview.difficulty or _estimate_difficulty(subtitle_spans, segments),
@@ -1347,6 +1378,13 @@ def _build_overview_row(
         topic=config.overview.topic,
         source=config.overview.source,
     )
+
+
+def _copy_existing_background_audio(source_mp3: Path, output_path: Path) -> BackgroundAudioResult:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if source_mp3.resolve() != output_path.resolve():
+        shutil.copy2(source_mp3, output_path)
+    return BackgroundAudioResult(path=output_path, from_cache=False, cache_path=None, source_path=source_mp3)
 
 
 def _estimate_difficulty(subtitle_spans: list[SubtitleSpan], segments: list[Segment]) -> str:

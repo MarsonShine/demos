@@ -10,7 +10,7 @@ from openpyxl import load_workbook
 
 from video_analysis_pipeline.config import load_config
 from video_analysis_pipeline.config import SegmentationConfig
-from video_analysis_pipeline.models import OverviewRow, Segment, SubtitleSpan, TranscriptUtterance, WordTiming
+from video_analysis_pipeline.models import MediaMetadata, OverviewRow, Segment, SubtitleSpan, TimeRange, TranscriptUtterance, WordTiming
 from video_analysis_pipeline.pipeline import (
     ProcessedItem,
     _build_leading_title_segment,
@@ -19,6 +19,7 @@ from video_analysis_pipeline.pipeline import (
     discover_batch_inputs,
     process_batch,
     process_single_overview,
+    process_single_video,
 )
 
 
@@ -113,6 +114,7 @@ class PipelineTests(unittest.TestCase):
             second_job.mkdir(parents=True)
             (first_job / "02.mp4").write_bytes(b"fake")
             (first_job / "02.srt").write_text("", encoding="utf-8")
+            (first_job / "02.mp3").write_bytes(b"bgm")
             (second_job / "lesson.mp4").write_bytes(b"fake")
             (second_job / "lesson.srt").write_text("", encoding="utf-8")
 
@@ -121,9 +123,11 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(len(items), 2)
             self.assertEqual(items[0].source_mp4.relative_to(input_root), Path("1") / "02.mp4")
             self.assertEqual(items[0].source_srt.relative_to(input_root), Path("1") / "02.srt")
+            self.assertEqual(items[0].source_mp3.relative_to(input_root), Path("1") / "02.mp3")
             self.assertEqual(items[0].relative_dir, Path("1"))
             self.assertEqual(items[1].source_mp4.relative_to(input_root), Path("nested") / "10" / "lesson.mp4")
             self.assertEqual(items[1].source_srt.relative_to(input_root), Path("nested") / "10" / "lesson.srt")
+            self.assertIsNone(items[1].source_mp3)
             self.assertEqual(items[1].relative_dir, Path("nested") / "10")
 
     def test_discover_batch_inputs_raises_when_folder_does_not_have_exact_pair(self) -> None:
@@ -133,7 +137,20 @@ class PipelineTests(unittest.TestCase):
             invalid_job.mkdir(parents=True)
             (invalid_job / "02.mp4").write_bytes(b"fake")
 
-            with self.assertRaisesRegex(RuntimeError, "exactly one MP4 and one SRT"):
+            with self.assertRaisesRegex(RuntimeError, "exactly one MP4, one SRT, and at most one MP3"):
+                discover_batch_inputs(input_root)
+
+    def test_discover_batch_inputs_raises_when_folder_has_multiple_mp3_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            input_root = Path(tmp_dir) / "input"
+            invalid_job = input_root / "lesson"
+            invalid_job.mkdir(parents=True)
+            (invalid_job / "02.mp4").write_bytes(b"fake")
+            (invalid_job / "02.srt").write_text("", encoding="utf-8")
+            (invalid_job / "a.mp3").write_bytes(b"one")
+            (invalid_job / "b.mp3").write_bytes(b"two")
+
+            with self.assertRaisesRegex(RuntimeError, "at most one MP3"):
                 discover_batch_inputs(input_root)
 
     def test_process_batch_mirrors_relative_output_paths(self) -> None:
@@ -144,9 +161,11 @@ class PipelineTests(unittest.TestCase):
             nested_job.mkdir(parents=True)
             source_mp4 = nested_job / "clip.mp4"
             source_srt = nested_job / "clip.srt"
+            source_mp3 = nested_job / "clip.mp3"
             source_mp4.write_bytes(b"fake")
             source_srt.write_text("", encoding="utf-8")
-            calls: list[tuple[Path, Path, Path, int]] = []
+            source_mp3.write_bytes(b"bgm")
+            calls: list[tuple[Path, Path, Path | None, Path, int]] = []
 
             def fake_process_single_video(
                 source_mp4: Path,
@@ -154,6 +173,7 @@ class PipelineTests(unittest.TestCase):
                 sequence_no: int,
                 config: object,
                 source_srt: Path | None = None,
+                source_mp3: Path | None = None,
                 template_path: Path | None = None,
                 workbook_output: Path | None = None,
                 transcriber: object | None = None,
@@ -161,7 +181,7 @@ class PipelineTests(unittest.TestCase):
                 generate_overview: bool = True,
             ) -> ProcessedItem:
                 assert source_srt is not None
-                calls.append((source_mp4, source_srt, output_dir, sequence_no))
+                calls.append((source_mp4, source_srt, source_mp3, output_dir, sequence_no))
                 return ProcessedItem(
                     sequence_no=sequence_no,
                     source_mp4=source_mp4,
@@ -188,8 +208,9 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(len(calls), 1)
             self.assertEqual(calls[0][0], source_mp4)
             self.assertEqual(calls[0][1], source_srt)
-            self.assertEqual(calls[0][2], output_root / "season1" / "episode2")
-            self.assertEqual(calls[0][3], 1)
+            self.assertEqual(calls[0][2], source_mp3)
+            self.assertEqual(calls[0][3], output_root / "season1" / "episode2")
+            self.assertEqual(calls[0][4], 1)
 
     def test_process_batch_can_skip_overview_generation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -207,6 +228,7 @@ class PipelineTests(unittest.TestCase):
                 sequence_no: int,
                 config: object,
                 source_srt: Path | None = None,
+                source_mp3: Path | None = None,
                 template_path: Path | None = None,
                 workbook_output: Path | None = None,
                 transcriber: object | None = None,
@@ -258,6 +280,7 @@ class PipelineTests(unittest.TestCase):
                 sequence_no: int,
                 config: object,
                 source_srt: Path | None = None,
+                source_mp3: Path | None = None,
                 template_path: Path | None = None,
                 workbook_output: Path | None = None,
                 transcriber: object | None = None,
@@ -407,6 +430,7 @@ class PipelineTests(unittest.TestCase):
                 sequence_no: int,
                 config: object,
                 source_srt: Path | None = None,
+                source_mp3: Path | None = None,
                 template_path: Path | None = None,
                 workbook_output: Path | None = None,
                 transcriber: object | None = None,
@@ -439,6 +463,182 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(processed_output_dirs, [output_root / "lesson-02"])
             self.assertEqual([item.output_dir for item in results], [output_root / "lesson-01", output_root / "lesson-02"])
             self.assertEqual(results[0].timings, {"copy-source-video": 1.25})
+
+    def test_process_single_video_can_skip_background_audio_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            workspace_root = Path(tmp_dir)
+            source_mp4 = workspace_root / "clip.mp4"
+            source_srt = workspace_root / "clip.srt"
+            output_dir = workspace_root / "output"
+            source_mp4.write_bytes(b"fake")
+            source_srt.write_text("", encoding="utf-8")
+            config = load_config(Path(__file__).resolve().parents[1] / "pipeline_config.json")
+            config.steps.export_source_video = False
+            config.steps.export_cover = False
+            config.steps.export_muted_video = False
+            config.steps.export_background_audio = False
+            config.steps.generate_summary = False
+            config.steps.export_workbook = False
+            config.steps.export_review_page = False
+            config.steps.export_csv = False
+
+            class FakeTranscriber:
+                def transcribe(self, audio_path: Path) -> list[TranscriptUtterance]:
+                    return []
+
+            def fake_extract_audio_mp3(source_path: Path, output_path: Path) -> Path:
+                output_path.write_bytes(b"analysis")
+                return output_path
+
+            def fake_probe_media(path: Path) -> MediaMetadata:
+                if path.suffix.lower() == ".mp4":
+                    return MediaMetadata(
+                        path=str(path),
+                        duration_ms=1_000,
+                        video_streams=1,
+                        audio_streams=1,
+                        width=1280,
+                        height=720,
+                        sample_rate=44100,
+                        channels=2,
+                    )
+                return MediaMetadata(
+                    path=str(path),
+                    duration_ms=1_000,
+                    video_streams=0,
+                    audio_streams=1,
+                    sample_rate=44100,
+                    channels=2,
+                )
+
+            alignment_summary = {
+                "alignment_mode": "asr-only",
+                "matched_segments": 0,
+                "unmatched_segments": 0,
+                "total_subtitle_spans": 0,
+            }
+
+            with patch("video_analysis_pipeline.pipeline.extract_audio_mp3", side_effect=fake_extract_audio_mp3), patch(
+                "video_analysis_pipeline.pipeline.probe_media",
+                side_effect=fake_probe_media,
+            ), patch(
+                "video_analysis_pipeline.pipeline.detect_silence",
+                return_value=([], [TimeRange(start_ms=0, end_ms=1_000)]),
+            ), patch(
+                "video_analysis_pipeline.pipeline.parse_srt_file",
+                return_value=[],
+            ), patch(
+                "video_analysis_pipeline.pipeline._build_output_segments",
+                return_value=([], alignment_summary, []),
+            ):
+                result = process_single_video(
+                    source_mp4=source_mp4,
+                    output_dir=output_dir,
+                    sequence_no=1,
+                    config=config,
+                    source_srt=source_srt,
+                    transcriber=FakeTranscriber(),
+                    generate_overview=False,
+                )
+
+            self.assertEqual(result.output_dir, output_dir)
+            self.assertFalse((output_dir / "03.mp3").exists())
+            manifest_payload = json.loads((output_dir / "manifest.json").read_text(encoding="utf-8"))
+            self.assertIsNone(manifest_payload["audio_mp3"])
+            self.assertEqual(manifest_payload["audio_processing"]["output_audio_kind"], "none")
+            self.assertIsNone(manifest_payload["media"]["audio"])
+            segments_payload = json.loads((output_dir / "segments.json").read_text(encoding="utf-8"))
+            self.assertIsNone(segments_payload["audio_mp3"])
+
+    def test_process_single_video_reuses_input_mp3_as_background_audio(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            workspace_root = Path(tmp_dir)
+            source_mp4 = workspace_root / "clip.mp4"
+            source_srt = workspace_root / "clip.srt"
+            source_mp3 = workspace_root / "clip.mp3"
+            output_dir = workspace_root / "output"
+            source_mp4.write_bytes(b"fake")
+            source_srt.write_text("", encoding="utf-8")
+            source_mp3.write_bytes(b"provided-bgm")
+            config = load_config(Path(__file__).resolve().parents[1] / "pipeline_config.json")
+            config.steps.export_source_video = False
+            config.steps.export_cover = False
+            config.steps.export_muted_video = False
+            config.steps.export_background_audio = False
+            config.steps.generate_summary = False
+            config.steps.export_workbook = False
+            config.steps.export_review_page = False
+            config.steps.export_csv = False
+
+            class FakeTranscriber:
+                def transcribe(self, audio_path: Path) -> list[TranscriptUtterance]:
+                    return []
+
+            def fake_extract_audio_mp3(source_path: Path, output_path: Path) -> Path:
+                output_path.write_bytes(b"analysis")
+                return output_path
+
+            def fake_probe_media(path: Path) -> MediaMetadata:
+                if path.suffix.lower() == ".mp4":
+                    return MediaMetadata(
+                        path=str(path),
+                        duration_ms=1_000,
+                        video_streams=1,
+                        audio_streams=1,
+                        width=1280,
+                        height=720,
+                        sample_rate=44100,
+                        channels=2,
+                    )
+                return MediaMetadata(
+                    path=str(path),
+                    duration_ms=1_000,
+                    video_streams=0,
+                    audio_streams=1,
+                    sample_rate=44100,
+                    channels=2,
+                )
+
+            alignment_summary = {
+                "alignment_mode": "asr-only",
+                "matched_segments": 0,
+                "unmatched_segments": 0,
+                "total_subtitle_spans": 0,
+            }
+
+            with patch("video_analysis_pipeline.pipeline.extract_audio_mp3", side_effect=fake_extract_audio_mp3), patch(
+                "video_analysis_pipeline.pipeline.extract_background_audio_mp3"
+            ) as extract_background_audio_mock, patch(
+                "video_analysis_pipeline.pipeline.probe_media",
+                side_effect=fake_probe_media,
+            ), patch(
+                "video_analysis_pipeline.pipeline.detect_silence",
+                return_value=([], [TimeRange(start_ms=0, end_ms=1_000)]),
+            ), patch(
+                "video_analysis_pipeline.pipeline.parse_srt_file",
+                return_value=[],
+            ), patch(
+                "video_analysis_pipeline.pipeline._build_output_segments",
+                return_value=([], alignment_summary, []),
+            ):
+                process_single_video(
+                    source_mp4=source_mp4,
+                    output_dir=output_dir,
+                    sequence_no=1,
+                    config=config,
+                    source_srt=source_srt,
+                    source_mp3=source_mp3,
+                    transcriber=FakeTranscriber(),
+                    generate_overview=False,
+                )
+
+            extract_background_audio_mock.assert_not_called()
+            self.assertEqual((output_dir / "03.mp3").read_bytes(), b"provided-bgm")
+            manifest_payload = json.loads((output_dir / "manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest_payload["audio_mp3"], str(output_dir / "03.mp3"))
+            self.assertEqual(manifest_payload["audio_processing"]["output_audio_kind"], "bgm")
+            self.assertEqual(manifest_payload["audio_processing"]["provided_source_path"], str(source_mp3))
+            self.assertIsNone(manifest_payload["audio_processing"]["separation_method"])
 
     def test_process_single_overview_rebuilds_workbook_from_existing_outputs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
