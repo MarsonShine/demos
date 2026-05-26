@@ -30,6 +30,7 @@ from video_analysis_pipeline.media import (
     extract_cover,
     extract_muted_video,
     probe_media,
+    resolve_source_video_export_stage,
 )
 from video_analysis_pipeline.models import OverviewRow, Segment, SubtitleSpan, TranscriptUtterance
 from video_analysis_pipeline.progress import ProgressEventCallback, StageProgressTracker
@@ -130,10 +131,11 @@ def process_single_video(
     output_dir.mkdir(parents=True, exist_ok=True)
     progress_path = output_dir / "progress.json"
     progress_tracker = StageProgressTracker(progress_path=progress_path, label=output_dir.name, callback=progress_callback)
+    source_video_export_stage = resolve_source_video_export_stage(config.video)
 
     if steps.export_source_video:
         source_asset = progress_tracker.run(
-            "copy-source-video",
+            source_video_export_stage,
             lambda: copy_source_video(source_mp4, output_dir / "02.mp4", config.video),
         )
     else:
@@ -594,7 +596,18 @@ def process_batch(
     batch_started_at = perf_counter()
     actual_workbook_output = _resolve_batch_workbook_output(output_root, workbook_output, final_output)
     item_progress: dict[str, dict[str, Any]] = {}
-    completed_output_dirs = _load_completed_batch_output_dirs(batch_progress_path) if resume else set()
+    completed_output_dirs: set[str] = set()
+    if resume:
+        completed_output_dirs = _load_completed_batch_output_dirs(batch_progress_path)
+        completed_output_dirs_from_outputs = _discover_completed_batch_output_dirs(
+            output_root=output_root,
+            discovered_inputs=discovered_inputs,
+            final_output=final_output,
+        )
+        recovered_output_dirs = completed_output_dirs_from_outputs - completed_output_dirs
+        if recovered_output_dirs:
+            print(f"Resume recovered {len(recovered_output_dirs)} completed item(s) from existing output artifacts.")
+        completed_output_dirs |= completed_output_dirs_from_outputs
 
     def write_batch_progress(current_item: str | None = None, current_stage: str | None = None, status: str = "running") -> None:
         write_json(
@@ -1226,6 +1239,24 @@ def _load_completed_batch_output_dirs(batch_progress_path: Path) -> set[str]:
         output_dir_value = item.get("output_dir")
         if output_dir_value:
             completed_output_dirs.add(str(output_dir_value))
+    return completed_output_dirs
+
+
+def _discover_completed_batch_output_dirs(
+    output_root: Path,
+    discovered_inputs: list[BatchInputItem],
+    final_output: str,
+) -> set[str]:
+    completed_output_dirs: set[str] = set()
+    for sequence_no, batch_item in enumerate(discovered_inputs, start=1):
+        output_dir = _resolve_final_batch_output_dir(
+            output_root=output_root,
+            relative_dir=batch_item.relative_dir,
+            sequence_no=sequence_no,
+            final_output=final_output,
+        )
+        if _try_load_completed_batch_item(output_dir) is not None:
+            completed_output_dirs.add(str(output_dir))
     return completed_output_dirs
 
 

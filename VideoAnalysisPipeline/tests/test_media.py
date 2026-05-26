@@ -15,6 +15,7 @@ from video_analysis_pipeline.media import (
     copy_source_video,
     detect_silence,
     extract_background_audio_mp3,
+    resolve_source_video_export_stage,
 )
 from video_analysis_pipeline.models import MediaMetadata
 
@@ -202,6 +203,7 @@ class MediaTests(unittest.TestCase):
 
         def fake_run_command(args: list[str]) -> subprocess.CompletedProcess[str]:
             self.assertEqual(args[0], "ffmpeg")
+            self.assertEqual(args[args.index("-preset") + 1], "slow")
             self.assertEqual(args[args.index("-b:a") + 1], "128k")
             self.assertEqual(args[args.index("-b:v") + 1], "179k")
             Path(args[-1]).write_bytes(b"compressed-video")
@@ -218,6 +220,43 @@ class MediaTests(unittest.TestCase):
 
             self.assertEqual(result, output_video)
             self.assertEqual(output_video.read_bytes(), b"compressed-video")
+
+    @patch("video_analysis_pipeline.media.probe_media")
+    @patch("video_analysis_pipeline.media.run_command")
+    def test_copy_source_video_uses_configured_x264_preset(
+        self,
+        mock_run_command: object,
+        mock_probe_media: object,
+    ) -> None:
+        mock_probe_media.return_value = MediaMetadata(path="source.mp4", duration_ms=240_000, video_streams=1, audio_streams=1)
+
+        def fake_run_command(args: list[str]) -> subprocess.CompletedProcess[str]:
+            self.assertEqual(args[args.index("-preset") + 1], "veryfast")
+            Path(args[-1]).write_bytes(b"compressed-video")
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+        mock_run_command.side_effect = fake_run_command
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            source_video = Path(tmp_dir) / "source.mp4"
+            output_video = Path(tmp_dir) / "02.mp4"
+            source_video.write_bytes(b"x" * (9149 * 1024))
+
+            result = copy_source_video(
+                source_video,
+                output_video,
+                VideoOutputConfig(target_size_ratio=1.0, audio_bitrate_kbps=128, x264_preset="veryfast"),
+            )
+
+            self.assertEqual(result, output_video)
+            self.assertEqual(output_video.read_bytes(), b"compressed-video")
+
+    def test_resolve_source_video_export_stage_distinguishes_copy_and_transcode(self) -> None:
+        self.assertEqual(resolve_source_video_export_stage(VideoOutputConfig()), "copy-source-video")
+        self.assertEqual(
+            resolve_source_video_export_stage(VideoOutputConfig(target_bitrate_kbps=500)),
+            "transcode-source-video",
+        )
 
     @patch("video_analysis_pipeline.media.probe_media")
     @patch("video_analysis_pipeline.media.run_command")

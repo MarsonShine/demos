@@ -157,6 +157,7 @@ class VideoOutputConfig:
     target_size_ratio: float = 0.0
     target_bitrate_kbps: int = 0
     audio_bitrate_kbps: int = 128
+    x264_preset: str = "slow"
     frame_width: int = 0
     frame_height: int = 0
     frame_rate: float = 0.0
@@ -173,6 +174,8 @@ class VideoOutputConfig:
             raise ValueError("video target_size_ratio and target_bitrate_kbps cannot both be set.")
         if self.audio_bitrate_kbps < 32:
             raise ValueError("video audio_bitrate_kbps must be at least 32.")
+        if self.x264_preset not in {"ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"}:
+            raise ValueError("video x264_preset must be a valid libx264 preset.")
         if self.frame_width < 0 or self.frame_height < 0:
             raise ValueError("video frame_width and frame_height must be >= 0.")
         if bool(self.frame_width) != bool(self.frame_height):
@@ -387,6 +390,7 @@ def load_config(path: Path) -> PipelineConfig:
         target_size_ratio=float(video_data.get("target_size_ratio", 0.0)),
         target_bitrate_kbps=int(video_data.get("target_bitrate_kbps", 0)),
         audio_bitrate_kbps=int(video_data.get("audio_bitrate_kbps", 128)),
+        x264_preset=str(video_data.get("x264_preset", "slow")),
         frame_width=int(video_data.get("frame_width", 0)),
         frame_height=int(video_data.get("frame_height", 0)),
         frame_rate=float(video_data.get("frame_rate", 0.0)),

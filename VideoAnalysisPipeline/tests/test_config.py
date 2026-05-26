@@ -49,6 +49,7 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(config.video.target_size_ratio, 0.0)
             self.assertEqual(config.video.target_bitrate_kbps, 0)
             self.assertEqual(config.video.audio_bitrate_kbps, 128)
+            self.assertEqual(config.video.x264_preset, "slow")
             self.assertEqual(config.video.frame_width, 0)
             self.assertEqual(config.video.frame_height, 0)
             self.assertEqual(config.video.frame_rate, 0.0)
@@ -117,6 +118,7 @@ class ConfigTests(unittest.TestCase):
                         "video": {
                             "target_bitrate_kbps": 2000,
                             "audio_bitrate_kbps": 128,
+                            "x264_preset": "veryfast",
                             "frame_width": 1280,
                             "frame_height": 720,
                             "frame_rate": 25,
@@ -133,6 +135,7 @@ class ConfigTests(unittest.TestCase):
 
             self.assertEqual(config.video.target_bitrate_kbps, 2000)
             self.assertEqual(config.video.audio_bitrate_kbps, 128)
+            self.assertEqual(config.video.x264_preset, "veryfast")
             self.assertEqual(config.video.frame_width, 1280)
             self.assertEqual(config.video.frame_height, 720)
             self.assertEqual(config.video.frame_rate, 25)

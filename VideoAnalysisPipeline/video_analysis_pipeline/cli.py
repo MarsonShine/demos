@@ -89,6 +89,15 @@ def add_export_size_args(parser: argparse.ArgumentParser) -> None:
         ),
     )
     parser.add_argument(
+        "--video-x264-preset",
+        type=str,
+        default=None,
+        help=(
+            "Optional libx264 preset for exported 02.mp4. "
+            "Valid values: ultrafast, superfast, veryfast, faster, fast, medium, slow, slower, veryslow."
+        ),
+    )
+    parser.add_argument(
         "--video-frame-size",
         type=str,
         default=None,
@@ -327,6 +336,9 @@ def main(argv: list[str] | None = None) -> int:
         video_audio_bitrate_kbps = getattr(args, "video_audio_bitrate_kbps", None)
         if video_audio_bitrate_kbps is not None:
             config.video.audio_bitrate_kbps = video_audio_bitrate_kbps
+        video_x264_preset = getattr(args, "video_x264_preset", None)
+        if video_x264_preset is not None:
+            config.video.x264_preset = video_x264_preset
         video_frame_size = getattr(args, "video_frame_size", None)
         if video_frame_size is not None:
             config.video.frame_width, config.video.frame_height = resolve_video_frame_size(video_frame_size)

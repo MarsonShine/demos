@@ -335,8 +335,9 @@ Optional filters:
 - `--srt-name 02.srt` only processes folders whose single SRT has that filename
 - `--final-output mod` switches final packaging to MOD layout (`movie_dubbing.xlsx` + `dubbing/<sequence_no>`)
 - `--video-target-size-ratio 0.1233` derives a ratio-based video bitrate budget for exported `02.mp4`
+- `--video-x264-preset veryfast` uses a faster libx264 preset for exported `02.mp4` when you want speed over compression efficiency
 - `--audio-target-size-ratio 0.7380` derives a ratio-based MP3 bitrate budget for exported `03.mp3`
-- `--resume` skips batch items already marked completed in `batch_progress.json` and continues from the first unfinished item
+- `--resume` skips batch items already marked completed in `batch_progress.json` and, if that file is incomplete, falls back to already finished output folders that still contain `manifest.json` and `segments.json`
 
 4.1 Batch segment-only mode
 
@@ -367,7 +368,7 @@ If a batch run stops midway, rerun the same command with `--resume`:
       --output-root "C:\video-analysis\output_batch" `
       --resume
 
-`--resume` reads `batch_progress.json`, keeps already completed items in the final merged workbook inputs, and only reprocesses the first unfinished item and everything after it.
+`--resume` first reads `batch_progress.json`. If that file is missing completed entries but earlier output folders still contain `manifest.json` and `segments.json`, resume also recovers those completed items from disk. It then keeps completed items in the final merged workbook inputs and only reprocesses the first unfinished item and everything after it.
 
 
 5. Step-Skip Configuration

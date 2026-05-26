@@ -18,6 +18,7 @@ def _build_config_stub() -> SimpleNamespace:
             target_size_ratio=0.0,
             target_bitrate_kbps=0,
             audio_bitrate_kbps=128,
+            x264_preset="slow",
             frame_width=0,
             frame_height=0,
             frame_rate=0.0,
@@ -264,6 +265,34 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         self.assertEqual(config.video.audio_bitrate_kbps, 32)
+
+    def test_single_accepts_video_x264_preset_override(self) -> None:
+        config = _build_config_stub()
+        with patch("video_analysis_pipeline.cli.load_config", return_value=config), patch(
+            "video_analysis_pipeline.cli.process_single_video",
+            return_value=ProcessedItem(
+                sequence_no=1,
+                source_mp4=Path("E:\\tmp\\02.mp4"),
+                output_dir=Path("E:\\tmp\\output"),
+                workbook_path=Path("E:\\tmp\\output\\dubbing.result.xlsx"),
+                review_page_path=Path("E:\\tmp\\output\\review.html"),
+                segments=[],
+            ),
+        ):
+            exit_code = main(
+                [
+                    "single",
+                    "--source-mp4",
+                    "E:\\tmp\\clip.mp4",
+                    "--output-dir",
+                    "E:\\tmp\\output",
+                    "--video-x264-preset",
+                    "veryfast",
+                ]
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(config.video.x264_preset, "veryfast")
 
     def test_single_accepts_explicit_video_export_profile_overrides(self) -> None:
         config = _build_config_stub()

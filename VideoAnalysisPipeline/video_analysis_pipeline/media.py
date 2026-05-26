@@ -316,6 +316,12 @@ def _requires_video_transcode(config: VideoOutputConfig) -> bool:
     )
 
 
+def resolve_source_video_export_stage(config: VideoOutputConfig | None) -> str:
+    if config is not None and _requires_video_transcode(config):
+        return "transcode-source-video"
+    return "copy-source-video"
+
+
 def _transcode_source_video(
     source_path: Path,
     target_path: Path,
@@ -340,7 +346,7 @@ def _transcode_source_video(
         "-c:v",
         "libx264",
         "-preset",
-        "slow",
+        config.x264_preset,
         "-pix_fmt",
         "yuv420p",
         "-b:v",
