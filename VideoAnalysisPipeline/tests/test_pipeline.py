@@ -10,6 +10,7 @@ from openpyxl import load_workbook
 
 from video_analysis_pipeline.config import load_config
 from video_analysis_pipeline.config import SegmentationConfig
+from video_analysis_pipeline.media import BackgroundAudioResult
 from video_analysis_pipeline.models import MediaMetadata, OverviewRow, Segment, SubtitleSpan, TimeRange, TranscriptUtterance, WordTiming
 from video_analysis_pipeline.pipeline import (
     ProcessedItem,
@@ -813,6 +814,120 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(manifest_payload["audio_processing"]["output_audio_kind"], "bgm")
             self.assertEqual(manifest_payload["audio_processing"]["provided_source_path"], str(source_mp3))
             self.assertIsNone(manifest_payload["audio_processing"]["separation_method"])
+
+    def test_process_single_video_uses_stable_bgm_cache_key_across_reruns(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            workspace_root = Path(tmp_dir)
+            source_mp4 = workspace_root / "clip.mp4"
+            source_srt = workspace_root / "clip.srt"
+            output_dir = workspace_root / "output"
+            source_mp4.write_bytes(b"fake-source-video")
+            source_srt.write_text("", encoding="utf-8")
+            config = load_config(Path(__file__).resolve().parents[1] / "pipeline_config.json")
+            config.steps.export_source_video = True
+            config.steps.export_cover = False
+            config.steps.export_muted_video = False
+            config.steps.export_background_audio = True
+            config.steps.generate_summary = False
+            config.steps.export_workbook = False
+            config.steps.export_review_page = False
+            config.steps.export_csv = False
+            config.video.target_bitrate_kbps = 500
+            config.video.audio_bitrate_kbps = 128
+
+            class FakeTranscriber:
+                def transcribe(self, audio_path: Path) -> list[TranscriptUtterance]:
+                    return []
+
+            def fake_copy_source_video(source_path: Path, target_path: Path, config: object | None = None) -> Path:
+                existing_bytes = target_path.read_bytes() if target_path.exists() else b""
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                target_path.write_bytes(existing_bytes + b"x")
+                return target_path
+
+            def fake_extract_audio_mp3(source_path: Path, output_path: Path) -> Path:
+                output_path.write_bytes(b"analysis")
+                return output_path
+
+            def fake_probe_media(path: Path) -> MediaMetadata:
+                if path.suffix.lower() == ".mp4":
+                    return MediaMetadata(
+                        path=str(path),
+                        duration_ms=1_000,
+                        video_streams=1,
+                        audio_streams=1,
+                        width=1280,
+                        height=720,
+                        sample_rate=44100,
+                        channels=2,
+                    )
+                return MediaMetadata(
+                    path=str(path),
+                    duration_ms=1_000,
+                    video_streams=0,
+                    audio_streams=1,
+                    sample_rate=44100,
+                    channels=2,
+                )
+
+            alignment_summary = {
+                "alignment_mode": "asr-only",
+                "matched_segments": 0,
+                "unmatched_segments": 0,
+                "total_subtitle_spans": 0,
+            }
+            received_cache_keys: list[str | None] = []
+
+            def fake_extract_background_audio_mp3(
+                source_path: Path,
+                output_path: Path,
+                config: object,
+                cache_key_material: str | None = None,
+            ) -> BackgroundAudioResult:
+                received_cache_keys.append(cache_key_material)
+                output_path.write_bytes(b"bgm")
+                return BackgroundAudioResult(path=output_path, from_cache=False, cache_path=None)
+
+            with patch("video_analysis_pipeline.pipeline.copy_source_video", side_effect=fake_copy_source_video), patch(
+                "video_analysis_pipeline.pipeline.extract_audio_mp3",
+                side_effect=fake_extract_audio_mp3,
+            ), patch(
+                "video_analysis_pipeline.pipeline.extract_background_audio_mp3",
+                side_effect=fake_extract_background_audio_mp3,
+            ), patch(
+                "video_analysis_pipeline.pipeline.probe_media",
+                side_effect=fake_probe_media,
+            ), patch(
+                "video_analysis_pipeline.pipeline.detect_silence",
+                return_value=([], [TimeRange(start_ms=0, end_ms=1_000)]),
+            ), patch(
+                "video_analysis_pipeline.pipeline.parse_srt_file",
+                return_value=[],
+            ), patch(
+                "video_analysis_pipeline.pipeline._build_output_segments",
+                return_value=([], alignment_summary, []),
+            ):
+                process_single_video(
+                    source_mp4=source_mp4,
+                    output_dir=output_dir,
+                    sequence_no=1,
+                    config=config,
+                    source_srt=source_srt,
+                    transcriber=FakeTranscriber(),
+                    generate_overview=False,
+                )
+                process_single_video(
+                    source_mp4=source_mp4,
+                    output_dir=output_dir,
+                    sequence_no=1,
+                    config=config,
+                    source_srt=source_srt,
+                    transcriber=FakeTranscriber(),
+                    generate_overview=False,
+                )
+
+            self.assertEqual(len(received_cache_keys), 2)
+            self.assertEqual(received_cache_keys[0], received_cache_keys[1])
 
     def test_process_single_overview_rebuilds_workbook_from_existing_outputs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

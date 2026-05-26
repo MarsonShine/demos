@@ -178,7 +178,11 @@ def process_single_video(
                 lambda: _copy_existing_background_audio(source_mp3, output_dir / "03.mp3"),
             )
         elif steps.export_background_audio:
-            source_cache_key_material = _build_audio_cache_key_material(source_asset)
+            source_cache_key_material = _build_audio_cache_key_material(
+                source_mp4=source_mp4,
+                export_source_video=steps.export_source_video,
+                config=config,
+            )
             background_audio_result = progress_tracker.run(
                 "extract-bgm",
                 lambda: extract_background_audio_mp3(
@@ -1360,9 +1364,27 @@ def _coerce_timings_map(payload: Any) -> dict[str, float]:
     return timings
 
 
-def _build_audio_cache_key_material(source_asset: Path) -> str:
-    stats = source_asset.stat()
-    return f"{source_asset.resolve()}|{stats.st_size}|{stats.st_mtime_ns}"
+def _build_audio_cache_key_material(
+    source_mp4: Path,
+    export_source_video: bool,
+    config: PipelineConfig,
+) -> str:
+    stats = source_mp4.stat()
+    key_parts = [
+        str(source_mp4.resolve()),
+        str(stats.st_size),
+        str(stats.st_mtime_ns),
+    ]
+    if export_source_video:
+        key_parts.extend(
+            [
+                str(config.video.audio_bitrate_kbps),
+                str(config.video.audio_sample_rate_hz),
+                str(config.video.audio_channels),
+                str(config.video.audio_bit_depth),
+            ]
+        )
+    return "|".join(key_parts)
 
 
 def _derive_display_title(source_path: Path) -> str:

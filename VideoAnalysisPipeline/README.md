@@ -40,7 +40,7 @@ py run_pipeline.py batch --input-root <input> --output-root <output>
 py run_pipeline.py batch --input-root <input> --output-root <output> --final-output mod
 py run_pipeline.py batch --input-root <input> --output-root <output> --video-target-size-ratio 0.0833 --audio-target-size-ratio 0.4380
 py run_pipeline.py single --source-mp4 <mp4> --output-dir <output> --video-target-size-ratio 1000 --video-audio-bitrate-kbps 128 --audio-target-size-ratio 128
-py run_pipeline.py single --source-mp4 <mp4> --output-dir <output> --video-target-size-ratio 2000 --video-audio-bitrate-kbps 128 --video-frame-size 1280x720 --video-fps 25 --video-audio-sample-rate-hz 44100 --video-audio-channels 2 --video-audio-bit-depth 32
+py run_pipeline.py single --source-mp4 <mp4> --output-dir <output> --video-target-size-ratio 2000 --video-audio-bitrate-kbps 128 --video-x264-preset veryfast --video-frame-size 1280x720 --video-fps 25 --video-audio-sample-rate-hz 44100 --video-audio-channels 2 --video-audio-bit-depth 32
 ```
 
 You can now split the workflow when you do **not** want to rerun everything:
@@ -58,12 +58,14 @@ py run_pipeline.py batch-overview --output-root <existing-output-root>
 - `batch --final-output mod`: emit MOD-ready assets under `dubbing/<sequence_no>`, write root workbook `movie_dubbing.xlsx`, and clean intermediate artifacts.
 - `--video-target-size-ratio`: accepts either a numeric ratio or an explicit video bitrate in kbps, such as `64`, `500`, `64k`, or `500kbps`.
 - `--video-audio-bitrate-kbps`: controls the embedded AAC audio bitrate inside `02.mp4`.
+- `--video-x264-preset`: controls the libx264 speed/compression tradeoff for `02.mp4`; use values like `medium`, `fast`, or `veryfast` when export speed matters more than compression efficiency.
 - `--video-frame-size`: sets an explicit `02.mp4` output frame size such as `1280x720`.
 - `--video-fps`: sets an explicit `02.mp4` frame rate such as `25`.
 - `--video-audio-sample-rate-hz`, `--video-audio-channels`, `--video-audio-bit-depth`: control embedded AAC export settings for `02.mp4`; `32`-bit maps to AAC `fltp` export.
 - `--audio-target-size-ratio`: accepts either a numeric ratio or an explicit MP3 bitrate in kbps, such as `32`, `64`, `128`, `32k`, or `128kbps`.
 - Smallest generally usable baseline: `02.mp4` video `64 kbps` + embedded audio `32 kbps`, and `03.mp3` at `32 kbps`.
 - Jianying-style 720p example: video `2000 kbps`, AAC `128 kbps`, frame size `1280x720`, frame rate `25`, sample rate `44100`, stereo `2`, and `32`-bit AAC export.
+- When any video export controls are set, the source-video step becomes a transcode rather than a simple file copy; progress now reports this as `transcode-source-video`.
 
 ## JS Subtitle DB To SRT
 
