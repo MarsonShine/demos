@@ -68,4 +68,5 @@ py run_pipeline.py single `
   --audio-target-size-ratio 125 `
   --skip summary
 
+py run_pipeline.py batch --input-root "E:\repositories\demos\VideoAnalysisPipeline\files\上海本地版4A5A动画\上海4A动画" --output-root "E:\repositories\demos\VideoAnalysisPipeline\output\上海本地版4A动画"  --video-target-size-ratio 1000 --video-audio-bitrate-kbps 128 --video-frame-size 1280x720 --video-fps 25 --video-audio-sample-rate-hz 44100 --video-audio-channels 2 --video-audio-bit-depth 32 --audio-target-size-ratio 128 --final-output mod --resume --video-x264-preset veryfast
 
