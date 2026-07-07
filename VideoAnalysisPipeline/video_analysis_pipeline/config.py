@@ -208,7 +208,7 @@ class AzureOpenAIConfig:
     endpoint: str = ""
     api_key: str = ""
     deployment: str = "gpt-5.4-mini"
-    api_version: str = "2024-10-21"
+    api_version: str = "2024-12-01-preview"
     temperature: float = 0.2
     max_output_tokens: int = 120
     max_input_chars: int = 12_000

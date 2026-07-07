@@ -13,6 +13,13 @@ from video_analysis_pipeline.models import Segment
 
 _JSON_BLOCK_PATTERN = re.compile(r"```(?:json)?\s*(?P<payload>[\[{].*[\]}])\s*```", re.DOTALL)
 _PROMPT_OVERHEAD_CHARS = 1_800
+_CONTENT_FILTER_FALLBACK_TEXT = "[翻译被内容筛选策略拦截]"
+_CONTENT_FILTER_MARKERS = (
+    "content management policy",
+    "content filtering",
+    "content filter",
+    "responsibleai",
+)
 
 
 def translate_segments_for_education(
@@ -27,8 +34,14 @@ def translate_segments_for_education(
 
     translation_map: dict[int, str] = {}
     for batch in _build_translation_batches(pending_segments, config.max_input_chars):
-        response_text = _request_segment_translations(batch, config)
-        translation_map.update(_parse_translation_response(response_text, batch))
+        try:
+            response_text = _request_segment_translations(batch, config)
+            translation_map.update(_parse_translation_response(response_text, batch))
+        except ValueError as exc:
+            if not _is_content_filter_error(exc):
+                raise
+            print(f"[translate] content filter blocked batch of {len(batch)} segments, retrying one-by-one …")
+            translation_map.update(_translate_segments_individually(batch, config))
 
     for segment in segments:
         if not segment.text.strip():
@@ -45,6 +58,33 @@ def translate_segments_for_education(
 
 def _has_translation(segment: Segment) -> bool:
     return bool((segment.translated_text or "").strip())
+
+
+def _is_content_filter_error(error: Exception) -> bool:
+    message = str(error).lower()
+    return any(marker in message for marker in _CONTENT_FILTER_MARKERS)
+
+
+def _translate_segments_individually(
+    batch: Sequence[Segment],
+    config: AzureOpenAIConfig,
+) -> dict[int, str]:
+    """Translate segments one at a time to isolate content-filter-triggering segments."""
+    translations: dict[int, str] = {}
+    for segment in batch:
+        try:
+            response_text = _request_segment_translations([segment], config)
+            translations.update(_parse_translation_response(response_text, [segment]))
+        except ValueError as exc:
+            if _is_content_filter_error(exc):
+                print(
+                    f"[translate] segment {segment.segment_no} blocked by content filter, "
+                    f"using fallback text."
+                )
+                translations[segment.segment_no] = _CONTENT_FILTER_FALLBACK_TEXT
+            else:
+                raise
+    return translations
 
 
 def _build_translation_batches(
