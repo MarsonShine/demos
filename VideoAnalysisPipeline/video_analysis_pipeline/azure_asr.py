@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import wave
 from pathlib import Path
 from threading import Event
 
@@ -32,7 +33,25 @@ class AzureSpeechTranscriber:
         speech_config.request_word_level_timestamps()
         speech_config.output_format = speechsdk.OutputFormat.Detailed
 
-        audio_config = speechsdk.audio.AudioConfig(filename=str(audio_path))
+        # Read WAV into memory and create a PushAudioInputStream.
+        # The stream must stay open during continuous recognition — closing it
+        # early triggers EndOfStream cancellation.
+        with wave.open(str(audio_path), "rb") as wf:
+            sample_rate = wf.getframerate()
+            bits_per_sample = wf.getsampwidth() * 8
+            channels = wf.getnchannels()
+            pcm_data = wf.readframes(wf.getnframes())
+
+        stream_format = speechsdk.audio.AudioStreamFormat(
+            samples_per_second=sample_rate,
+            bits_per_sample=bits_per_sample,
+            channels=channels,
+        )
+        push_stream = speechsdk.audio.PushAudioInputStream(stream_format=stream_format)
+        push_stream.write(pcm_data)
+        # Do NOT close the stream yet — continuous recognition needs it open.
+
+        audio_config = speechsdk.audio.AudioConfig(stream=push_stream)
         recognizer = speechsdk.SpeechRecognizer(
             speech_config=speech_config,
             audio_config=audio_config,
@@ -59,6 +78,11 @@ class AzureSpeechTranscriber:
             nonlocal cancellation_message
             details = speechsdk.CancellationDetails(event.result)
             reason = getattr(details.reason, "name", str(details.reason))
+            # EndOfStream is normal when using PushAudioInputStream — the
+            # stream close signals end-of-input, not an error.
+            if details.reason == speechsdk.CancellationReason.EndOfStream:
+                done.set()
+                return
             error_details = details.error_details or "No error details were returned by Azure Speech."
             cancellation_message = f"Azure Speech canceled recognition: {reason}. {error_details}"
             done.set()
@@ -68,6 +92,10 @@ class AzureSpeechTranscriber:
         recognizer.canceled.connect(handle_canceled)
 
         recognizer.start_continuous_recognition()
+        # Close the stream now to signal end-of-audio to the recognizer.
+        # This must happen AFTER start_continuous_recognition so the SDK
+        # can drain the buffered PCM data and fire session_stopped.
+        push_stream.close()
         done.wait()
         recognizer.stop_continuous_recognition()
 

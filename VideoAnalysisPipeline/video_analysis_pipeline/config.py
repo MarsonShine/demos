@@ -350,9 +350,9 @@ def load_config(path: Path) -> PipelineConfig:
     )
 
     azure_config = AzureSpeechConfig(
-        subscription_key=str(azure_data.get("subscription_key", "")),
-        region=str(azure_data.get("region", "")),
-        language=str(azure_data.get("language", "en-US")),
+        subscription_key=str(azure_data.get("subscription_key", "")).strip(),
+        region=str(azure_data.get("region", "")).strip(),
+        language=str(azure_data.get("language", "en-US")).strip(),
     )
 
     faster_whisper_config = FasterWhisperConfig(

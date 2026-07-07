@@ -527,6 +527,30 @@ def extract_audio_mp3(source_path: Path, output_path: Path) -> Path:
     return output_path
 
 
+def extract_audio_wav(source_path: Path, output_path: Path) -> Path:
+    """Extract audio as 16-bit mono PCM WAV (compatible with Azure Speech SDK)."""
+    run_command(
+        [
+            "ffmpeg",
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            str(source_path),
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            "16000",
+            "-c:a",
+            "pcm_s16le",
+            str(output_path),
+        ]
+    )
+    return output_path
+
+
 def extract_background_audio_mp3(
     source_path: Path,
     output_path: Path,

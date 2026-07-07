@@ -661,7 +661,7 @@ class PipelineTests(unittest.TestCase):
                 def transcribe(self, audio_path: Path) -> list[TranscriptUtterance]:
                     return []
 
-            def fake_extract_audio_mp3(source_path: Path, output_path: Path) -> Path:
+            def fake_extract_audio_wav(source_path: Path, output_path: Path) -> Path:
                 output_path.write_bytes(b"analysis")
                 return output_path
 
@@ -693,7 +693,7 @@ class PipelineTests(unittest.TestCase):
                 "total_subtitle_spans": 0,
             }
 
-            with patch("video_analysis_pipeline.pipeline.extract_audio_mp3", side_effect=fake_extract_audio_mp3), patch(
+            with patch("video_analysis_pipeline.pipeline.extract_audio_wav", side_effect=fake_extract_audio_wav), patch(
                 "video_analysis_pipeline.pipeline.probe_media",
                 side_effect=fake_probe_media,
             ), patch(
@@ -749,7 +749,7 @@ class PipelineTests(unittest.TestCase):
                 def transcribe(self, audio_path: Path) -> list[TranscriptUtterance]:
                     return []
 
-            def fake_extract_audio_mp3(source_path: Path, output_path: Path) -> Path:
+            def fake_extract_audio_wav(source_path: Path, output_path: Path) -> Path:
                 output_path.write_bytes(b"analysis")
                 return output_path
 
@@ -781,7 +781,7 @@ class PipelineTests(unittest.TestCase):
                 "total_subtitle_spans": 0,
             }
 
-            with patch("video_analysis_pipeline.pipeline.extract_audio_mp3", side_effect=fake_extract_audio_mp3), patch(
+            with patch("video_analysis_pipeline.pipeline.extract_audio_wav", side_effect=fake_extract_audio_wav), patch(
                 "video_analysis_pipeline.pipeline.extract_background_audio_mp3"
             ) as extract_background_audio_mock, patch(
                 "video_analysis_pipeline.pipeline.probe_media",
@@ -845,7 +845,7 @@ class PipelineTests(unittest.TestCase):
                 target_path.write_bytes(existing_bytes + b"x")
                 return target_path
 
-            def fake_extract_audio_mp3(source_path: Path, output_path: Path) -> Path:
+            def fake_extract_audio_wav(source_path: Path, output_path: Path) -> Path:
                 output_path.write_bytes(b"analysis")
                 return output_path
 
@@ -889,8 +889,8 @@ class PipelineTests(unittest.TestCase):
                 return BackgroundAudioResult(path=output_path, from_cache=False, cache_path=None)
 
             with patch("video_analysis_pipeline.pipeline.copy_source_video", side_effect=fake_copy_source_video), patch(
-                "video_analysis_pipeline.pipeline.extract_audio_mp3",
-                side_effect=fake_extract_audio_mp3,
+                "video_analysis_pipeline.pipeline.extract_audio_wav",
+                side_effect=fake_extract_audio_wav,
             ), patch(
                 "video_analysis_pipeline.pipeline.extract_background_audio_mp3",
                 side_effect=fake_extract_background_audio_mp3,

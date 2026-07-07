@@ -26,6 +26,7 @@ from video_analysis_pipeline.media import (
     copy_source_video,
     detect_silence,
     extract_audio_mp3,
+    extract_audio_wav,
     extract_background_audio_mp3,
     extract_cover,
     extract_muted_video,
@@ -169,7 +170,7 @@ def process_single_video(
     with tempfile.TemporaryDirectory(prefix="video-analysis-audio-") as temp_dir:
         analysis_audio_path = progress_tracker.run(
             "extract-analysis-audio",
-            lambda: extract_audio_mp3(source_asset, Path(temp_dir) / "analysis.mp3"),
+            lambda: extract_audio_wav(source_asset, Path(temp_dir) / "analysis.wav"),
         )
         analysis_audio_metadata = progress_tracker.run("probe-analysis-audio", lambda: probe_media(analysis_audio_path))
         if source_mp3 is not None:
