@@ -430,6 +430,16 @@ class MediaTests(unittest.TestCase):
             self.assertEqual(args[args.index("-b:a") + 1], "128k")
             self.assertEqual(args[args.index("-vf") + 1], "scale=1280:720:force_original_aspect_ratio=decrease:flags=lanczos,pad=1280:720:(ow-iw)/2:(oh-ih)/2")
             self.assertEqual(args[args.index("-r") + 1], "25")
+            self.assertEqual(args[args.index("-profile:v") + 1], "main")
+            self.assertEqual(args[args.index("-level:v") + 1], "3.1")
+            self.assertEqual(args[args.index("-coder:v") + 1], "cabac")
+            self.assertEqual(args[args.index("-refs") + 1], "3")
+            self.assertEqual(args[args.index("-x264-params") + 1], "b-pyramid=none")
+            self.assertEqual(args[args.index("-force_key_frames") + 1], "expr:gte(t,n_forced*1)")
+            self.assertEqual(args[args.index("-g") + 1], "25")
+            self.assertEqual(args[args.index("-keyint_min") + 1], "25")
+            self.assertEqual(args[args.index("-sc_threshold") + 1], "0")
+            self.assertEqual(args[args.index("-f") + 1], "psp")
             self.assertEqual(args[args.index("-ar") + 1], "44100")
             self.assertEqual(args[args.index("-ac") + 1], "2")
             self.assertEqual(args[args.index("-sample_fmt") + 1], "fltp")
@@ -449,6 +459,11 @@ class MediaTests(unittest.TestCase):
                 VideoOutputConfig(
                     target_bitrate_kbps=2000,
                     audio_bitrate_kbps=128,
+                    mp4_muxer="psp",
+                    h264_profile="main",
+                    h264_level="3.1",
+                    keyframe_interval_seconds=1,
+                    reference_frames=3,
                     frame_width=1280,
                     frame_height=720,
                     frame_rate=25,

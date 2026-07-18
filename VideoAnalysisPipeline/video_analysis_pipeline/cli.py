@@ -98,6 +98,39 @@ def add_export_size_args(parser: argparse.ArgumentParser) -> None:
         ),
     )
     parser.add_argument(
+        "--video-h264-profile",
+        choices=("baseline", "main", "high"),
+        default=None,
+        help="Optional H.264 profile for exported 02.mp4. Use main to match Main@L3.1 Android-compatible exports.",
+    )
+    parser.add_argument(
+        "--video-h264-level",
+        type=str,
+        default=None,
+        help="Optional H.264 level for exported 02.mp4, for example 3.1.",
+    )
+    parser.add_argument(
+        "--video-keyframe-interval-seconds",
+        type=float,
+        default=None,
+        help=(
+            "Optional maximum keyframe interval in seconds for exported 02.mp4. "
+            "Use 1 for accurate Android MediaPlayer seeking."
+        ),
+    )
+    parser.add_argument(
+        "--video-reference-frames",
+        type=int,
+        default=None,
+        help="Optional H.264 reference-frame count for exported 02.mp4, for example 3.",
+    )
+    parser.add_argument(
+        "--video-mp4-muxer",
+        choices=("mp4", "psp"),
+        default=None,
+        help="Optional MP4 muxer for exported 02.mp4. Use psp to match the screenshot's MPEG-4 (Sony PSP) format profile.",
+    )
+    parser.add_argument(
         "--video-frame-size",
         type=str,
         default=None,
@@ -339,6 +372,21 @@ def main(argv: list[str] | None = None) -> int:
         video_x264_preset = getattr(args, "video_x264_preset", None)
         if video_x264_preset is not None:
             config.video.x264_preset = video_x264_preset
+        video_h264_profile = getattr(args, "video_h264_profile", None)
+        if video_h264_profile is not None:
+            config.video.h264_profile = video_h264_profile
+        video_h264_level = getattr(args, "video_h264_level", None)
+        if video_h264_level is not None:
+            config.video.h264_level = video_h264_level
+        video_keyframe_interval_seconds = getattr(args, "video_keyframe_interval_seconds", None)
+        if video_keyframe_interval_seconds is not None:
+            config.video.keyframe_interval_seconds = video_keyframe_interval_seconds
+        video_reference_frames = getattr(args, "video_reference_frames", None)
+        if video_reference_frames is not None:
+            config.video.reference_frames = video_reference_frames
+        video_mp4_muxer = getattr(args, "video_mp4_muxer", None)
+        if video_mp4_muxer is not None:
+            config.video.mp4_muxer = video_mp4_muxer
         video_frame_size = getattr(args, "video_frame_size", None)
         if video_frame_size is not None:
             config.video.frame_width, config.video.frame_height = resolve_video_frame_size(video_frame_size)

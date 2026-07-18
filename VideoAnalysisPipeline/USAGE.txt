@@ -71,6 +71,12 @@ Background-music output config:
       "target_size_ratio": 0.0,
       "target_bitrate_kbps": 0,
       "audio_bitrate_kbps": 128,
+      "x264_preset": "slow",
+      "mp4_muxer": "",
+      "h264_profile": "",
+      "h264_level": "",
+      "keyframe_interval_seconds": 0.0,
+      "reference_frames": 0,
       "frame_width": 0,
       "frame_height": 0,
       "frame_rate": 0.0,
@@ -95,6 +101,10 @@ The persisted `03.mp3` file is now the accompaniment/BGM track.
 When the same source video is reprocessed with the same audio settings, the pipeline reuses the cached BGM stem instead of rerunning Demucs.
 If `video.target_size_ratio` is greater than 0, `02.mp4` is transcoded toward that source-size ratio and uses `video.audio_bitrate_kbps` as the preferred embedded AAC bitrate.
 If `video.target_bitrate_kbps` is greater than 0, `02.mp4` uses that explicit video bitrate instead of deriving one from size.
+If `video.mp4_muxer` is `psp`, `02.mp4` uses the screenshot's MPEG-4 Sony PSP (`MSNV`) container profile.
+If `video.h264_profile` is `main` and `video.h264_level` is `3.1`, `02.mp4` is exported as H.264 Main@L3.1 with CABAC.
+If `video.keyframe_interval_seconds` is greater than 0, `02.mp4` receives periodic keyframes at that maximum interval. Use `1` for Android `MediaPlayer` seeking.
+If `video.reference_frames` is greater than 0, libx264 uses that reference-frame count and disables B-pyramid references so the SPS reports the requested count exactly.
 If `video.frame_width` and `video.frame_height` are greater than 0, `02.mp4` is letterboxed or scaled into that exact output frame size without changing the H.264/AAC container choice.
 If `video.frame_rate` is greater than 0, `02.mp4` is exported at that explicit frame rate.
 If `video.audio_sample_rate_hz`, `video.audio_channels`, or `video.audio_bit_depth` are greater than 0, those values are applied to the embedded AAC track inside `02.mp4`.
@@ -205,7 +215,7 @@ Explicit bitrate export example:
       --video-audio-bitrate-kbps 32 `
       --audio-target-size-ratio 32
 
-Jianying-style 720p export example:
+Android-seek-compatible Main@L3.1 720p export example:
 
     py run_pipeline.py single `
       --source-mp4 "C:\video-analysis\input\job-001\02.mp4" `
@@ -213,6 +223,12 @@ Jianying-style 720p export example:
       --output-dir "C:\video-analysis\output\job-001_review" `
       --video-target-size-ratio 2000 `
       --video-audio-bitrate-kbps 128 `
+      --video-x264-preset veryfast `
+      --video-mp4-muxer psp `
+      --video-h264-profile main `
+      --video-h264-level 3.1 `
+      --video-keyframe-interval-seconds 1 `
+      --video-reference-frames 3 `
       --video-frame-size 1280x720 `
       --video-fps 25 `
       --video-audio-sample-rate-hz 44100 `
@@ -336,8 +352,13 @@ Optional filters:
 - `--final-output mod` switches final packaging to MOD layout (`movie_dubbing.xlsx` + `dubbing/<sequence_no>`)
 - `--video-target-size-ratio 0.1233` derives a ratio-based video bitrate budget for exported `02.mp4`
 - `--video-x264-preset veryfast` uses a faster libx264 preset for exported `02.mp4` when you want speed over compression efficiency
+- `--video-mp4-muxer psp` writes the MPEG-4 Sony PSP (`MSNV`) container profile
+- `--video-h264-profile main --video-h264-level 3.1` emits Main@L3.1 with CABAC
+- `--video-keyframe-interval-seconds 1` limits GOP/keyframe spacing to one second for accurate Android seeking
+- `--video-reference-frames 3` emits exactly three H.264 reference frames
 - `--audio-target-size-ratio 0.7380` derives a ratio-based MP3 bitrate budget for exported `03.mp3`
 - `--resume` skips batch items already marked completed in `batch_progress.json` and, if that file is incomplete, falls back to already finished output folders that still contain `manifest.json` and `segments.json`
+- Do not use `--resume` when changing encoding settings for already completed items; use it only to continue an interrupted run with the same settings.
 
 4.1 Batch segment-only mode
 

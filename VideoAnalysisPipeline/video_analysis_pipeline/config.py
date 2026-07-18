@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -158,6 +159,11 @@ class VideoOutputConfig:
     target_bitrate_kbps: int = 0
     audio_bitrate_kbps: int = 128
     x264_preset: str = "slow"
+    mp4_muxer: str = ""
+    h264_profile: str = ""
+    h264_level: str = ""
+    keyframe_interval_seconds: float = 0.0
+    reference_frames: int = 0
     frame_width: int = 0
     frame_height: int = 0
     frame_rate: float = 0.0
@@ -176,6 +182,16 @@ class VideoOutputConfig:
             raise ValueError("video audio_bitrate_kbps must be at least 32.")
         if self.x264_preset not in {"ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"}:
             raise ValueError("video x264_preset must be a valid libx264 preset.")
+        if self.mp4_muxer not in {"", "mp4", "psp"}:
+            raise ValueError("video mp4_muxer must be mp4, psp, or empty.")
+        if self.h264_profile not in {"", "baseline", "main", "high"}:
+            raise ValueError("video h264_profile must be baseline, main, high, or empty.")
+        if self.h264_level and re.fullmatch(r"\d+(?:\.\d+)?", self.h264_level) is None:
+            raise ValueError("video h264_level must be a numeric H.264 level such as 3.1, or empty.")
+        if self.keyframe_interval_seconds < 0:
+            raise ValueError("video keyframe_interval_seconds must be >= 0.")
+        if not 0 <= self.reference_frames <= 16:
+            raise ValueError("video reference_frames must be between 0 and 16.")
         if self.frame_width < 0 or self.frame_height < 0:
             raise ValueError("video frame_width and frame_height must be >= 0.")
         if bool(self.frame_width) != bool(self.frame_height):
@@ -391,6 +407,11 @@ def load_config(path: Path) -> PipelineConfig:
         target_bitrate_kbps=int(video_data.get("target_bitrate_kbps", 0)),
         audio_bitrate_kbps=int(video_data.get("audio_bitrate_kbps", 128)),
         x264_preset=str(video_data.get("x264_preset", "slow")),
+        mp4_muxer=str(video_data.get("mp4_muxer", "")),
+        h264_profile=str(video_data.get("h264_profile", "")),
+        h264_level=str(video_data.get("h264_level", "")),
+        keyframe_interval_seconds=float(video_data.get("keyframe_interval_seconds", 0.0)),
+        reference_frames=int(video_data.get("reference_frames", 0)),
         frame_width=int(video_data.get("frame_width", 0)),
         frame_height=int(video_data.get("frame_height", 0)),
         frame_rate=float(video_data.get("frame_rate", 0.0)),

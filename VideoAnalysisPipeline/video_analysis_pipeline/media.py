@@ -297,6 +297,11 @@ def _resolve_aac_sample_format(audio_bit_depth: int) -> str:
 def _has_explicit_video_export_overrides(config: VideoOutputConfig) -> bool:
     return any(
         (
+            bool(config.mp4_muxer),
+            bool(config.h264_profile),
+            bool(config.h264_level),
+            config.keyframe_interval_seconds > 0,
+            config.reference_frames > 0,
             config.frame_width > 0,
             config.frame_height > 0,
             config.frame_rate > 0,
@@ -356,10 +361,40 @@ def _transcode_source_video(
         "-bufsize",
         f"{max(video_bitrate_kbps * 2, video_bitrate_kbps)}k",
     ]
+    if config.h264_profile:
+        command.extend(["-profile:v", config.h264_profile])
+        if config.h264_profile != "baseline":
+            command.extend(["-coder:v", "cabac"])
+    if config.h264_level:
+        command.extend(["-level:v", config.h264_level])
+    if config.reference_frames > 0:
+        command.extend(
+            [
+                "-refs",
+                str(config.reference_frames),
+                "-x264-params",
+                "b-pyramid=none",
+            ]
+        )
     if video_filter:
         command.extend(["-vf", video_filter])
     if config.frame_rate > 0:
         command.extend(["-r", _format_numeric_cli_value(config.frame_rate)])
+    if config.keyframe_interval_seconds > 0:
+        interval = _format_numeric_cli_value(config.keyframe_interval_seconds)
+        command.extend(["-force_key_frames", f"expr:gte(t,n_forced*{interval})"])
+        if config.frame_rate > 0:
+            gop_frames = max(1, round(config.frame_rate * config.keyframe_interval_seconds))
+            command.extend(
+                [
+                    "-g",
+                    str(gop_frames),
+                    "-keyint_min",
+                    str(gop_frames),
+                    "-sc_threshold",
+                    "0",
+                ]
+            )
     if audio_bitrate_kbps > 0:
         command.extend(["-c:a", "aac", "-b:a", f"{audio_bitrate_kbps}k"])
         if config.audio_sample_rate_hz > 0:
@@ -370,7 +405,10 @@ def _transcode_source_video(
             command.extend(["-sample_fmt", _resolve_aac_sample_format(config.audio_bit_depth)])
     else:
         command.append("-an")
-    command.extend(["-movflags", "+faststart", str(actual_target_path)])
+    command.extend(["-movflags", "+faststart"])
+    if config.mp4_muxer:
+        command.extend(["-f", config.mp4_muxer])
+    command.append(str(actual_target_path))
     run_command(command)
     if actual_target_path != target_path:
         actual_target_path.replace(target_path)

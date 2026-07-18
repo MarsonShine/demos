@@ -50,6 +50,11 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(config.video.target_bitrate_kbps, 0)
             self.assertEqual(config.video.audio_bitrate_kbps, 128)
             self.assertEqual(config.video.x264_preset, "slow")
+            self.assertEqual(config.video.mp4_muxer, "")
+            self.assertEqual(config.video.h264_profile, "")
+            self.assertEqual(config.video.h264_level, "")
+            self.assertEqual(config.video.keyframe_interval_seconds, 0.0)
+            self.assertEqual(config.video.reference_frames, 0)
             self.assertEqual(config.video.frame_width, 0)
             self.assertEqual(config.video.frame_height, 0)
             self.assertEqual(config.video.frame_rate, 0.0)
@@ -119,6 +124,11 @@ class ConfigTests(unittest.TestCase):
                             "target_bitrate_kbps": 2000,
                             "audio_bitrate_kbps": 128,
                             "x264_preset": "veryfast",
+                            "mp4_muxer": "psp",
+                            "h264_profile": "main",
+                            "h264_level": "3.1",
+                            "keyframe_interval_seconds": 1,
+                            "reference_frames": 3,
                             "frame_width": 1280,
                             "frame_height": 720,
                             "frame_rate": 25,
@@ -136,6 +146,11 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(config.video.target_bitrate_kbps, 2000)
             self.assertEqual(config.video.audio_bitrate_kbps, 128)
             self.assertEqual(config.video.x264_preset, "veryfast")
+            self.assertEqual(config.video.mp4_muxer, "psp")
+            self.assertEqual(config.video.h264_profile, "main")
+            self.assertEqual(config.video.h264_level, "3.1")
+            self.assertEqual(config.video.keyframe_interval_seconds, 1)
+            self.assertEqual(config.video.reference_frames, 3)
             self.assertEqual(config.video.frame_width, 1280)
             self.assertEqual(config.video.frame_height, 720)
             self.assertEqual(config.video.frame_rate, 25)

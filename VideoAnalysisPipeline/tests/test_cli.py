@@ -19,6 +19,11 @@ def _build_config_stub() -> SimpleNamespace:
             target_bitrate_kbps=0,
             audio_bitrate_kbps=128,
             x264_preset="slow",
+            mp4_muxer="",
+            h264_profile="",
+            h264_level="",
+            keyframe_interval_seconds=0.0,
+            reference_frames=0,
             frame_width=0,
             frame_height=0,
             frame_rate=0.0,
@@ -318,6 +323,16 @@ class CliTests(unittest.TestCase):
                     "1280x720",
                     "--video-fps",
                     "25",
+                    "--video-h264-profile",
+                    "main",
+                    "--video-h264-level",
+                    "3.1",
+                    "--video-keyframe-interval-seconds",
+                    "1",
+                    "--video-reference-frames",
+                    "3",
+                    "--video-mp4-muxer",
+                    "psp",
                     "--video-audio-sample-rate-hz",
                     "44100",
                     "--video-audio-channels",
@@ -331,6 +346,11 @@ class CliTests(unittest.TestCase):
         self.assertEqual(config.video.frame_width, 1280)
         self.assertEqual(config.video.frame_height, 720)
         self.assertEqual(config.video.frame_rate, 25)
+        self.assertEqual(config.video.h264_profile, "main")
+        self.assertEqual(config.video.h264_level, "3.1")
+        self.assertEqual(config.video.keyframe_interval_seconds, 1)
+        self.assertEqual(config.video.reference_frames, 3)
+        self.assertEqual(config.video.mp4_muxer, "psp")
         self.assertEqual(config.video.audio_sample_rate_hz, 44100)
         self.assertEqual(config.video.audio_channels, 2)
         self.assertEqual(config.video.audio_bit_depth, 32)
