@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 from pathlib import Path
 
 from video_analysis_pipeline.config import load_config
+from video_analysis_pipeline.desktop_preflight import run_preflight
+from video_analysis_pipeline.desktop_events import EventWriter
 from video_analysis_pipeline.pipeline import (
     MOD_FINAL_OUTPUT,
     process_batch,
@@ -51,6 +54,21 @@ def add_resume_arg(parser: argparse.ArgumentParser) -> None:
         "--resume",
         action="store_true",
         help="Resume a batch run by skipping items already marked completed in output_root/batch_progress.json.",
+    )
+
+
+def _add_desktop_event_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--event-file",
+        type=Path,
+        default=None,
+        help="Path to a JSONL event file for desktop integration. Each event is written and flushed immediately.",
+    )
+    parser.add_argument(
+        "--run-id",
+        type=str,
+        default=None,
+        help="Unique run identifier for correlating events in the desktop host.",
     )
 
 
@@ -237,6 +255,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_export_size_args(batch_parser)
     add_skip_args(batch_parser)
     add_resume_arg(batch_parser)
+    _add_desktop_event_args(batch_parser)
 
     batch_segments_parser = subparsers.add_parser(
         "batch-segments",
@@ -252,6 +271,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_export_size_args(batch_segments_parser)
     add_skip_args(batch_segments_parser)
     add_resume_arg(batch_segments_parser)
+    _add_desktop_event_args(batch_segments_parser)
 
     batch_overview_parser = subparsers.add_parser(
         "batch-overview",
@@ -267,6 +287,13 @@ def build_parser() -> argparse.ArgumentParser:
     batch_overview_parser.add_argument("--output-root", type=Path, required=True, help="Existing output root that already contains generated item folders.")
     batch_overview_parser.add_argument("--template", type=Path, default=None, help="Optional Excel template. Defaults to dubbing.xlsx when present.")
     batch_overview_parser.add_argument("--workbook-output", type=Path, default=None, help="Optional merged workbook output path.")
+
+    preflight_parser = subparsers.add_parser(
+        "batch-preflight",
+        help="Scan input root and output a JSON manifest without running the pipeline.",
+    )
+    preflight_parser.add_argument("--input-root", type=Path, required=True, help="Root folder to scan recursively for per-folder MP4 + SRT pairs.")
+    preflight_parser.add_argument("--result-file", type=Path, required=True, help="Path to write the preflight JSON result.")
 
     review_server_parser = subparsers.add_parser(
         "review-server",
@@ -340,11 +367,70 @@ def resolve_audio_target_size_ratio(value: str) -> tuple[float, int]:
     return _resolve_ratio_or_bitrate(value, "audio-target-size-ratio")
 
 
+def _event_file_has_run_failed_event(event_file: Path, run_id: str) -> bool:
+    """Return whether this invocation has already written a terminal failure.
+
+    ``process_batch`` owns normal pipeline failures.  The CLI only uses this
+    check for failures that happen before it is called (for example an invalid
+    config) so a desktop host receives exactly one ``run_failed`` event.
+    """
+    try:
+        with event_file.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if event.get("event") == "run_failed" and event.get("run_id") == run_id:
+                    return True
+    except (OSError, UnicodeError):
+        return False
+    return False
+
+
+def _emit_cli_batch_failure_event(args: argparse.Namespace, exc: Exception) -> None:
+    """Best-effort fallback for batch setup failures before ``process_batch``."""
+    if args.command not in {"batch", "batch-segments"}:
+        return
+    event_file = getattr(args, "event_file", None)
+    run_id = getattr(args, "run_id", None)
+    if event_file is None or not run_id:
+        return
+    if _event_file_has_run_failed_event(event_file, run_id):
+        return
+
+    writer = EventWriter(event_file)
+    try:
+        writer.run_failed(
+            run_id=run_id,
+            total_items=0,
+            completed_items=0,
+            item_index=None,
+            relative_dir=None,
+            error_summary=f"{type(exc).__name__}: {exc}",
+            failure_phase="cli",
+        )
+    except Exception:
+        # The original setup failure is more useful than a secondary failure
+        # while attempting to write its diagnostic event.
+        pass
+    finally:
+        try:
+            writer.close()
+        except Exception:
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
     try:
+        if args.command == "batch-preflight":
+            run_preflight(input_root=args.input_root, result_file=args.result_file)
+            print(f"Preflight result written to: {args.result_file}")
+            return 0
+
         if args.command == "review-server":
             try:
                 serve_review_api(output_root=args.output_root, host=args.host, port=args.port)
@@ -467,6 +553,8 @@ def main(argv: list[str] | None = None) -> int:
                 workbook_output=args.workbook_output,
                 final_output=args.final_output,
             )
+            event_file = getattr(args, "event_file", None)
+            run_id = getattr(args, "run_id", None)
             results = process_batch(
                 input_root=args.input_root,
                 output_root=args.output_root,
@@ -477,12 +565,16 @@ def main(argv: list[str] | None = None) -> int:
                 workbook_output=workbook_output,
                 final_output=args.final_output,
                 resume=args.resume,
+                event_file=event_file,
+                run_id=run_id,
             )
             print(f"Processed items: {len(results)}")
             print(f"Workbook: {workbook_output}")
             return 0
 
         if args.command == "batch-segments":
+            event_file = getattr(args, "event_file", None)
+            run_id = getattr(args, "run_id", None)
             results = process_batch(
                 input_root=args.input_root,
                 output_root=args.output_root,
@@ -493,6 +585,8 @@ def main(argv: list[str] | None = None) -> int:
                 workbook_output=None,
                 generate_overview=False,
                 resume=args.resume,
+                event_file=event_file,
+                run_id=run_id,
             )
             print(f"Processed items: {len(results)}")
             return 0
@@ -508,5 +602,6 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Workbook: {workbook_output}")
         return 0
     except Exception as exc:
+        _emit_cli_batch_failure_event(args, exc)
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1

@@ -7,3 +7,16 @@ output/
 dubbing/
 files/
 .venv/
+
+# Generated VideoAnalysisDesktop runtime and release artifacts. The engine is
+# recreated on a controlled build machine from desktop/build/stage_engine.py
+# and packaged into the installer; it must not be committed to Git.
+/desktop/engine/
+/desktop/.engine.staging-*/
+/desktop/.vs/
+/desktop/**/bin/
+/desktop/**/obj/
+/desktop/build/cache/
+/desktop/build/test_output/
+/desktop/build/test_preflight.json
+/desktop/installer/output/

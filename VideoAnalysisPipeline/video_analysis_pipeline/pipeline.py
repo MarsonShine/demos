@@ -8,7 +8,7 @@ from time import perf_counter
 from statistics import fmean
 import re
 import tempfile
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 from video_analysis_pipeline.asr import create_transcriber, normalize_asr_provider
 from video_analysis_pipeline.azure_openai_translation import translate_segments_for_education
@@ -589,162 +589,296 @@ def process_batch(
     generate_overview: bool = True,
     final_output: str = "standard",
     resume: bool = False,
+    event_file: Path | None = None,
+    run_id: str | None = None,
 ) -> list[ProcessedItem]:
-    discovered_inputs = discover_batch_inputs(
-        input_root=input_root,
-        source_name=source_name,
-        srt_name=srt_name,
-    )
+    from video_analysis_pipeline.desktop_events import EventWriter
 
-    output_root.mkdir(parents=True, exist_ok=True)
-    batch_progress_path = output_root / "batch_progress.json"
-    batch_started_at = perf_counter()
-    actual_workbook_output = _resolve_batch_workbook_output(output_root, workbook_output, final_output)
+    event_writer: EventWriter | None = None
+    if event_file is not None:
+        event_writer = EventWriter(event_file)
+        event_writer.open()
+
+    # Everything after opening the writer is deliberately inside this try
+    # block.  Discovery and initialization failures used to escape before a
+    # terminal event was emitted, leaving the desktop with a hanging attempt.
+    discovered_inputs: list[BatchInputItem] = []
+    total_items = 0
     item_progress: dict[str, dict[str, Any]] = {}
-    completed_output_dirs: set[str] = set()
-    if resume:
-        completed_output_dirs = _load_completed_batch_output_dirs(batch_progress_path)
-        completed_output_dirs_from_outputs = _discover_completed_batch_output_dirs(
-            output_root=output_root,
-            discovered_inputs=discovered_inputs,
-            final_output=final_output,
-        )
-        recovered_output_dirs = completed_output_dirs_from_outputs - completed_output_dirs
-        if recovered_output_dirs:
-            print(f"Resume recovered {len(recovered_output_dirs)} completed item(s) from existing output artifacts.")
-        completed_output_dirs |= completed_output_dirs_from_outputs
+    processed_items: list[ProcessedItem] = []
+    active_item_index: int | None = None
+    active_relative_dir: str | None = None
+    failure_phase = "discover"
+    write_batch_progress: Callable[..., None] | None = None
 
-    def write_batch_progress(current_item: str | None = None, current_stage: str | None = None, status: str = "running") -> None:
+    try:
+        discovered_inputs = discover_batch_inputs(
+            input_root=input_root,
+            source_name=source_name,
+            srt_name=srt_name,
+        )
+        total_items = len(discovered_inputs)
+
+        if event_writer is not None and run_id is not None:
+            event_writer.run_started(
+                run_id=run_id,
+                total_items=total_items,
+                input_root=str(input_root),
+                output_root=str(output_root),
+            )
+
+        failure_phase = "initialize"
+        output_root.mkdir(parents=True, exist_ok=True)
+        batch_progress_path = output_root / "batch_progress.json"
+        batch_started_at = perf_counter()
+        actual_workbook_output = _resolve_batch_workbook_output(output_root, workbook_output, final_output)
+        completed_output_dirs: set[str] = set()
+        if resume:
+            completed_output_dirs = _load_completed_batch_output_dirs(batch_progress_path)
+            completed_output_dirs_from_outputs = _discover_completed_batch_output_dirs(
+                output_root=output_root,
+                discovered_inputs=discovered_inputs,
+                final_output=final_output,
+            )
+            recovered_output_dirs = completed_output_dirs_from_outputs - completed_output_dirs
+            if recovered_output_dirs:
+                print(f"Resume recovered {len(recovered_output_dirs)} completed item(s) from existing output artifacts.")
+            completed_output_dirs |= completed_output_dirs_from_outputs
+
+        def write_batch_progress(current_item: str | None = None, current_stage: str | None = None, status: str = "running") -> None:
+            write_json(
+                batch_progress_path,
+                {
+                    "status": status,
+                    "input_root": str(input_root),
+                    "output_root": str(output_root),
+                    "total_items": total_items,
+                    "completed_items": sum(1 for item in item_progress.values() if item.get("status") == "completed"),
+                    "current_item": current_item,
+                    "current_stage": current_stage,
+                    "elapsed_seconds": round(perf_counter() - batch_started_at, 3),
+                    "items": list(item_progress.values()),
+                },
+            )
+
+        for sequence_no, batch_item in enumerate(discovered_inputs, start=1):
+            failure_phase = "item"
+            active_item_index = sequence_no
+            active_relative_dir = str(batch_item.relative_dir)
+            output_dir = _resolve_final_batch_output_dir(
+                output_root=output_root,
+                relative_dir=batch_item.relative_dir,
+                sequence_no=sequence_no,
+                final_output=final_output,
+            )
+            item_key = str(output_dir)
+            if item_key in completed_output_dirs:
+                resumed_item = _try_load_completed_batch_item(output_dir)
+                if resumed_item is not None:
+                    item_progress[item_key] = {
+                        "sequence_no": sequence_no,
+                        "name": batch_item.source_mp4.stem,
+                        "output_dir": str(output_dir),
+                        "status": "completed",
+                        "current_stage": None,
+                        "timings_seconds": resumed_item.timings or {},
+                    }
+                    processed_items.append(resumed_item)
+                    write_batch_progress(current_item=item_key, status="running")
+                    active_item_index = None
+                    active_relative_dir = None
+                    continue
+                print(f"WARNING: Could not resume completed item from {output_dir}; reprocessing it.")
+
+            completed_count = sum(1 for item in item_progress.values() if item.get("status") == "completed")
+
+            if event_writer is not None and run_id is not None:
+                event_writer.item_started(
+                    run_id=run_id,
+                    total_items=total_items,
+                    completed_items=completed_count,
+                    item_index=sequence_no,
+                    relative_dir=str(batch_item.relative_dir),
+                )
+
+            item_progress[item_key] = {
+                "sequence_no": sequence_no,
+                "name": batch_item.source_mp4.stem,
+                "output_dir": str(output_dir),
+                "status": "running",
+                "current_stage": None,
+                "timings_seconds": {},
+            }
+            write_batch_progress(current_item=item_key, status="running")
+
+            def on_progress(stage: str, status: str, payload: dict[str, Any], item_key: str = item_key) -> None:
+                item_progress[item_key]["status"] = "failed" if status == "failed" else "running"
+                item_progress[item_key]["current_stage"] = payload.get("current_stage")
+                item_progress[item_key]["timings_seconds"] = payload.get("timings_seconds", {})
+                write_batch_progress(current_item=item_key, current_stage=payload.get("current_stage"), status="running")
+                if event_writer is not None and run_id is not None:
+                    event_writer.stage_changed(
+                        run_id=run_id,
+                        total_items=total_items,
+                        completed_items=completed_count,
+                        item_index=sequence_no,
+                        relative_dir=str(batch_item.relative_dir),
+                        stage=stage,
+                        status=status,
+                        details=payload.get("details", {}),
+                    )
+
+            processed_items.append(
+                process_single_video(
+                    source_mp4=batch_item.source_mp4,
+                    output_dir=output_dir,
+                    sequence_no=sequence_no,
+                    config=config,
+                    source_srt=batch_item.source_srt,
+                    source_mp3=batch_item.source_mp3,
+                    template_path=None,
+                    workbook_output=None,
+                    progress_callback=on_progress,
+                    generate_overview=generate_overview,
+                )
+            )
+            item_progress[item_key]["status"] = "completed"
+            item_progress[item_key]["current_stage"] = None
+            item_progress[item_key]["timings_seconds"] = processed_items[-1].timings or {}
+            write_batch_progress(current_item=item_key, status="running")
+
+            completed_count = sum(1 for item in item_progress.values() if item.get("status") == "completed")
+            if event_writer is not None and run_id is not None:
+                event_writer.item_completed(
+                    run_id=run_id,
+                    total_items=total_items,
+                    completed_items=completed_count,
+                    item_index=sequence_no,
+                    relative_dir=str(batch_item.relative_dir),
+                )
+            active_item_index = None
+            active_relative_dir = None
+
+        failure_phase = "finalize"
+        if generate_overview and actual_workbook_output is not None:
+            all_rows = []
+            overview_rows: list[OverviewRow] = []
+            for item in processed_items:
+                all_rows.extend(segments_to_rows(item.segments))
+                if item.overview_row is not None:
+                    overview_rows.append(item.overview_row)
+            export_workbook(
+                output_path=actual_workbook_output,
+                rows=all_rows,
+                overview_rows=overview_rows,
+                template_path=template_path,
+            )
+
+        batch_summary_path = output_root / "batch_summary.json"
         write_json(
-            batch_progress_path,
+            batch_summary_path,
             {
-                "status": status,
                 "input_root": str(input_root),
                 "output_root": str(output_root),
-                "total_items": len(discovered_inputs),
-                "completed_items": sum(1 for item in item_progress.values() if item.get("status") == "completed"),
-                "current_item": current_item,
-                "current_stage": current_stage,
+                "items": [
+                    {
+                        "sequence_no": item.sequence_no,
+                        "source_mp4": str(item.source_mp4),
+                        "output_dir": str(item.output_dir),
+                        "segment_count": len(item.segments),
+                        "overview": item.overview_row.to_json() if item.overview_row is not None else None,
+                        "timings_seconds": item.timings or {},
+                        "progress_json": str(item.output_dir / "progress.json"),
+                    }
+                    for item in processed_items
+                ],
+                "discovered_inputs": [
+                    {
+                        "source_mp4": str(batch_item.source_mp4),
+                        "source_srt": str(batch_item.source_srt),
+                        "relative_dir": str(batch_item.relative_dir),
+                    }
+                    for batch_item in discovered_inputs
+                ],
                 "elapsed_seconds": round(perf_counter() - batch_started_at, 3),
-                "items": list(item_progress.values()),
+                "progress_json": str(batch_progress_path),
+                "workbook": str(actual_workbook_output) if actual_workbook_output is not None else None,
             },
         )
+        write_batch_progress(status="completed")
 
-    processed_items: list[ProcessedItem] = []
-    for sequence_no, batch_item in enumerate(discovered_inputs, start=1):
-        output_dir = _resolve_final_batch_output_dir(
-            output_root=output_root,
-            relative_dir=batch_item.relative_dir,
-            sequence_no=sequence_no,
-            final_output=final_output,
-        )
-        item_key = str(output_dir)
-        if item_key in completed_output_dirs:
-            resumed_item = _try_load_completed_batch_item(output_dir)
-            if resumed_item is not None:
-                item_progress[item_key] = {
-                    "sequence_no": sequence_no,
-                    "name": batch_item.source_mp4.stem,
-                    "output_dir": str(output_dir),
-                    "status": "completed",
-                    "current_stage": None,
-                    "timings_seconds": resumed_item.timings or {},
-                }
-                processed_items.append(resumed_item)
-                write_batch_progress(current_item=item_key, status="running")
-                continue
-            print(f"WARNING: Could not resume completed item from {output_dir}; reprocessing it.")
-
-        item_progress[item_key] = {
-            "sequence_no": sequence_no,
-            "name": batch_item.source_mp4.stem,
-            "output_dir": str(output_dir),
-            "status": "running",
-            "current_stage": None,
-            "timings_seconds": {},
-        }
-        write_batch_progress(current_item=item_key, status="running")
-
-        def on_progress(stage: str, status: str, payload: dict[str, Any], item_key: str = item_key) -> None:
-            item_progress[item_key]["status"] = "failed" if status == "failed" else "running"
-            item_progress[item_key]["current_stage"] = payload.get("current_stage")
-            item_progress[item_key]["timings_seconds"] = payload.get("timings_seconds", {})
-            write_batch_progress(current_item=item_key, current_stage=payload.get("current_stage"), status="running")
-
-        processed_items.append(
-            process_single_video(
-                source_mp4=batch_item.source_mp4,
-                output_dir=output_dir,
-                sequence_no=sequence_no,
-                config=config,
-                source_srt=batch_item.source_srt,
-                source_mp3=batch_item.source_mp3,
-                template_path=None,
-                workbook_output=None,
-                progress_callback=on_progress,
-                generate_overview=generate_overview,
+        if final_output == MOD_FINAL_OUTPUT:
+            _cleanup_mod_output_artifacts(
+                output_root=output_root,
+                item_dirs=[item.output_dir for item in processed_items],
+                protected_paths=[actual_workbook_output],
             )
-        )
-        item_progress[item_key]["status"] = "completed"
-        item_progress[item_key]["current_stage"] = None
-        item_progress[item_key]["timings_seconds"] = processed_items[-1].timings or {}
-        write_batch_progress(current_item=item_key, status="running")
 
-    if generate_overview and actual_workbook_output is not None:
-        all_rows = []
-        overview_rows: list[OverviewRow] = []
-        for item in processed_items:
-            all_rows.extend(segments_to_rows(item.segments))
-            if item.overview_row is not None:
-                overview_rows.append(item.overview_row)
-        export_workbook(
-            output_path=actual_workbook_output,
-            rows=all_rows,
-            overview_rows=overview_rows,
-            template_path=template_path,
-        )
+        completed_count = sum(1 for item in item_progress.values() if item.get("status") == "completed")
+        if event_writer is not None and run_id is not None:
+            event_writer.run_completed(
+                run_id=run_id,
+                total_items=total_items,
+                completed_items=completed_count,
+            )
+        return processed_items
+    except Exception:
+        completed_count = sum(1 for item in item_progress.values() if item.get("status") == "completed")
+        if write_batch_progress is not None:
+            try:
+                active_item_key = next(
+                    (
+                        key
+                        for key, item in item_progress.items()
+                        if item.get("sequence_no") == active_item_index
+                    ),
+                    None,
+                )
+                if active_item_key is not None:
+                    item_progress[active_item_key]["status"] = "failed"
+                write_batch_progress(current_item=active_item_key, status="failed")
+            except OSError:
+                # The original processing failure remains the actionable error
+                # when the output volume can no longer be written.
+                pass
+        if event_writer is not None and run_id is not None:
+            try:
+                event_writer.run_failed(
+                    run_id=run_id,
+                    total_items=total_items,
+                    completed_items=completed_count,
+                    item_index=active_item_index,
+                    relative_dir=active_relative_dir,
+                    error_summary=_get_active_exception_summary(),
+                    failure_phase=failure_phase,
+                )
+            except OSError:
+                # Preserve the original pipeline exception if the diagnostic
+                # destination itself is unavailable.
+                pass
+        raise
+    finally:
+        if event_writer is not None:
+            try:
+                event_writer.close()
+            except OSError:
+                pass
 
-    batch_summary_path = output_root / "batch_summary.json"
-    write_json(
-        batch_summary_path,
-        {
-            "input_root": str(input_root),
-            "output_root": str(output_root),
-            "items": [
-                {
-                    "sequence_no": item.sequence_no,
-                    "source_mp4": str(item.source_mp4),
-                    "output_dir": str(item.output_dir),
-                    "segment_count": len(item.segments),
-                    "overview": item.overview_row.to_json() if item.overview_row is not None else None,
-                    "timings_seconds": item.timings or {},
-                    "progress_json": str(item.output_dir / "progress.json"),
-                }
-                for item in processed_items
-            ],
-            "discovered_inputs": [
-                {
-                    "source_mp4": str(batch_item.source_mp4),
-                    "source_srt": str(batch_item.source_srt),
-                    "relative_dir": str(batch_item.relative_dir),
-                }
-                for batch_item in discovered_inputs
-            ],
-            "elapsed_seconds": round(perf_counter() - batch_started_at, 3),
-            "progress_json": str(batch_progress_path),
-            "workbook": str(actual_workbook_output) if actual_workbook_output is not None else None,
-        },
-    )
-    write_batch_progress(status="completed")
 
-    if final_output == MOD_FINAL_OUTPUT:
-        _cleanup_mod_output_artifacts(
-            output_root=output_root,
-            item_dirs=[item.output_dir for item in processed_items],
-            protected_paths=[actual_workbook_output],
-        )
+def _get_active_exception_summary() -> str:
+    """Return a safe, single-line summary of the currently handled exception."""
+    import sys
+    import traceback
 
-    return processed_items
+    exc_type, exc_value, _ = sys.exc_info()
+    if exc_value is None:
+        return "Unknown error"
+    message = f"{exc_type.__name__}: {exc_value}" if exc_type else str(exc_value)
+    # Take only the last line of a multi-line traceback for the summary
+    tb_lines = traceback.format_exc().strip().splitlines()
+    if tb_lines:
+        message = tb_lines[-1]
+    return message[:500]
 
 
 def process_single_overview(

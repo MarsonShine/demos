@@ -636,7 +636,7 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(batch_progress_payload["completed_items"], 2)
             self.assertEqual(
                 [(item["sequence_no"], item["status"]) for item in batch_progress_payload["items"]],
-                [(1, "completed"), (2, "completed"), (3, "running")],
+                [(1, "completed"), (2, "completed"), (3, "failed")],
             )
 
     def test_process_single_video_can_skip_background_audio_output(self) -> None:

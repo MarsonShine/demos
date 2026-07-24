@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="VideoAnalysisDesktop.App/VideoAnalysisDesktop.App.csproj" />
+  <Project Path="VideoAnalysisDesktop.Application/VideoAnalysisDesktop.Application.csproj" />
+  <Project Path="VideoAnalysisDesktop.Infrastructure/VideoAnalysisDesktop.Infrastructure.csproj" />
+  <Project Path="VideoAnalysisDesktop.Tests/VideoAnalysisDesktop.Tests.csproj" />
+</Solution>

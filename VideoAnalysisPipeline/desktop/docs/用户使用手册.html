@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>视频处理助手用户手册</title>
+  <style>
+    :root { color-scheme: light; font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif; color: #172033; }
+    body { margin: 0; background: #f4f7fb; line-height: 1.75; }
+    main { max-width: 900px; margin: 32px auto; padding: 36px 48px; background: #fff; border-radius: 16px; box-shadow: 0 8px 32px #20306014; }
+    h1 { color: #122766; margin-top: 0; } h2 { margin-top: 2em; color: #123d8c; border-bottom: 1px solid #dce5f6; padding-bottom: .35em; }
+    .lead { font-size: 1.08em; color: #3b4965; } .notice { background: #eaf4ff; border-left: 4px solid #1685e5; padding: 14px 18px; border-radius: 6px; }
+    ol, ul { padding-left: 1.5em; } code { background: #eef1f7; padding: .1em .35em; border-radius: 4px; }
+    table { width: 100%; border-collapse: collapse; } th, td { border: 1px solid #dce2ec; padding: 10px; vertical-align: top; } th { background: #f1f5fb; text-align: left; }
+    @media (max-width: 680px) { main { margin: 0; border-radius: 0; padding: 24px; } }
+  </style>
+</head>
+<body>
+<main>
+  <h1>视频处理助手用户手册</h1>
+  <p class="lead">本程序把一批课程视频处理为统一的 MOD 输出。您只需选择文件夹、运行预检并开始处理；程序不要求您安装 Python、FFmpeg 或执行命令。</p>
+
+  <h2>安装</h2>
+  <ol>
+    <li>下载管理员或发布页提供的 <code>VideoAnalysisDesktop-Setup-x64-版本号.exe</code>。</li>
+    <li>双击安装包，按向导选择“安装”。Windows 要求权限确认时选择“是”。</li>
+    <li>从桌面或开始菜单打开 <strong>VideoAnalysisDesktop</strong>。</li>
+  </ol>
+  <p class="notice">安装包已包含处理运行时、FFmpeg 和模型。请不要从安装目录删除文件。</p>
+
+  <h2>首次使用：由管理员配置</h2>
+  <p>管理员点击主界面的 <strong>Admin Settings</strong>，按组织提供的信息填写 Azure OpenAI Endpoint、API Key 和 Deployment 名称，然后保存。普通操作人员不需要、也不应复制或查看 API Key。</p>
+
+  <h2>准备输入文件</h2>
+  <p>选择一个输入根目录。每个需要处理的课程子文件夹必须包含：</p>
+  <ul>
+    <li>1 个 MP4 视频；</li>
+    <li>1 个 SRT 字幕；</li>
+    <li>可选的 1 个 MP3 背景音频。</li>
+  </ul>
+  <p>MP4 和 SRT 必须在同一个子文件夹内。不要在一个子文件夹放两段视频或两份字幕；输出目录也不能放在输入目录里面。</p>
+
+  <h2>处理一批文件</h2>
+  <ol>
+    <li>点击 <strong>选择输入目录</strong>，选择准备好的输入根目录。</li>
+    <li>点击 <strong>选择输出目录</strong>，选择一个新的、空的文件夹。建议每次任务都新建输出文件夹。</li>
+    <li>点击 <strong>运行预检</strong>。预检会检查文件结构和项目数量，不会处理视频。</li>
+    <li>预检显示通过后，点击 <strong>开始处理</strong>。</li>
+    <li>等待进度完成。处理期间请不要关闭程序、移动输入文件或删除输出文件。</li>
+  </ol>
+
+  <h2>查看结果</h2>
+  <p>任务成功后点击 <strong>打开输出目录</strong>。每个项目会生成：</p>
+  <ul>
+    <li><code>dubbing\1\01.jpg</code>：封面图</li>
+    <li><code>dubbing\1\01.mp4</code>：处理后的视频</li>
+    <li><code>dubbing\1\02.mp4</code>：静音视频</li>
+    <li><code>dubbing\1\03.mp3</code>：音频</li>
+    <li><code>movie_dubbing.xlsx</code>：汇总表</li>
+  </ul>
+  <p>多个项目会使用 <code>dubbing\1</code>、<code>dubbing\2</code> 等连续编号。</p>
+
+  <h2>取消或继续失败任务</h2>
+  <ul>
+    <li>需要停止时点击 <strong>取消</strong>，并等待界面显示任务已取消。</li>
+    <li>任务失败后，不要更改输入、输出或已经生成的文件。重新打开程序后选择 <strong>继续失败任务</strong>，程序会检查原始文件与处理参数后继续。</li>
+  </ul>
+
+  <h2>常见提示</h2>
+  <table>
+    <thead><tr><th>提示</th><th>处理方法</th></tr></thead>
+    <tbody>
+      <tr><td>预检失败</td><td>检查每个课程子文件夹是否恰好有 1 个 MP4 和 1 个 SRT。</td></tr>
+      <tr><td>输出目录必须为空</td><td>新建一个空文件夹作为输出目录。</td></tr>
+      <tr><td>输入/输出目录重叠</td><td>选择与输入目录完全分开的输出位置。</td></tr>
+      <tr><td>管理员凭据未配置</td><td>联系管理员在 Admin Settings 中完成配置。</td></tr>
+      <tr><td>内置处理引擎或 FFmpeg 不可用</td><td>重新运行安装包；不要手动复制或删除安装目录中的文件。</td></tr>
+      <tr><td>任务失败</td><td>保留输出目录和日志，先使用“继续失败任务”；仍失败时把日志交给管理员。</td></tr>
+    </tbody>
+  </table>
+
+  <h2>更新、卸载与数据</h2>
+  <p>更新时直接运行新版本安装包。卸载可从 Windows“已安装的应用”或开始菜单的卸载项执行。输入与输出文件保留在您选择的磁盘目录；转写和翻译会按管理员配置连接组织的 Azure 服务，请遵守组织的数据使用规范。</p>
+</main>
+</body>
+</html>

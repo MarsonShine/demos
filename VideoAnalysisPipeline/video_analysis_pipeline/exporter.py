@@ -3,6 +3,8 @@ from __future__ import annotations
 import csv
 import json
 import html
+import os
+import tempfile
 from pathlib import Path
 from typing import Iterable
 
@@ -16,10 +18,26 @@ SEGMENT_HEADERS = ["序号", "分视频序号", "分视频文本", "分视频文
 
 
 def write_json(path: Path, payload: object) -> Path:
-    path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2),
-        encoding="utf-8",
+    """Atomically write JSON payload to *path* via temp-file + flush/fsync + os.replace."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(
+        suffix=".json",
+        prefix=".tmp-",
+        dir=str(path.parent),
     )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, indent=2)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, path)
+    except BaseException:
+        # Clean up temp file on any failure
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
     return path
 
 

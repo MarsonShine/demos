@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=78"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "video-analysis-pipeline"
+version = "0.1.0"
+description = "Video analysis and dubbing asset pipeline used by VideoAnalysisDesktop"
+requires-python = ">=3.12,<3.13"
+dynamic = ["dependencies"]
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
+
+[tool.setuptools.packages.find]
+include = ["video_analysis_pipeline*", "js_subtitle_converter*"]
