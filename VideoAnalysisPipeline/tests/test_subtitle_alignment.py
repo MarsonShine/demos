@@ -3,11 +3,182 @@ from __future__ import annotations
 import unittest
 
 from video_analysis_pipeline.config import SegmentationConfig, SubtitleConfig
-from video_analysis_pipeline.models import SubtitleSpan, TranscriptUtterance, WordTiming
+from video_analysis_pipeline.models import SubtitleSpan, TimeRange, TranscriptUtterance, WordTiming
 from video_analysis_pipeline.subtitle_alignment import build_segments_from_subtitles
 
 
 class SubtitleAlignmentTests(unittest.TestCase):
+    def test_repairs_low_confidence_first_word_stuck_before_srt_gap(self) -> None:
+        utterances = [
+            TranscriptUtterance(
+                text="Turned blue. He should have kept what he had.",
+                start_ms=1_000,
+                end_ms=6_000,
+                words=[
+                    WordTiming(text="Turned", start_ms=1_000, end_ms=1_600, confidence=0.99),
+                    WordTiming(text="blue.", start_ms=1_600, end_ms=2_400, confidence=0.99),
+                    WordTiming(text="He", start_ms=2_400, end_ms=3_200, confidence=0.43),
+                    WordTiming(text="should", start_ms=3_200, end_ms=3_800, confidence=0.99),
+                    WordTiming(text="have", start_ms=3_800, end_ms=4_200, confidence=0.99),
+                    WordTiming(text="kept", start_ms=4_200, end_ms=4_600, confidence=0.99),
+                    WordTiming(text="what", start_ms=4_600, end_ms=5_000, confidence=0.99),
+                    WordTiming(text="he", start_ms=5_000, end_ms=5_300, confidence=0.99),
+                    WordTiming(text="had.", start_ms=5_300, end_ms=5_800, confidence=0.99),
+                ],
+            )
+        ]
+        subtitle_spans = [
+            SubtitleSpan(
+                text="Turned blue.",
+                normalized_text="turned blue",
+                start_ms=1_000,
+                end_ms=2_800,
+                confidence=1.0,
+                frame_count=1,
+                source="srt",
+            ),
+            SubtitleSpan(
+                text="He should have kept what he had.",
+                normalized_text="he should have kept what he had",
+                start_ms=3_300,
+                end_ms=6_200,
+                confidence=1.0,
+                frame_count=1,
+                source="srt",
+            ),
+        ]
+
+        segments, summary, _ = build_segments_from_subtitles(
+            sequence_no=1,
+            subtitle_spans=subtitle_spans,
+            utterances=utterances,
+            audio_duration_ms=7_000,
+            video_duration_ms=7_000,
+            segmentation_config=SegmentationConfig(),
+            subtitle_config=SubtitleConfig(),
+            low_confidence_boundary_silence_ranges=[TimeRange(start_ms=2_900, end_ms=3_200)],
+        )
+
+        self.assertEqual((segments[0].end_ms, segments[1].start_ms), (2_900, 3_200))
+        self.assertIn("srt_gap_validated_end", segments[0].quality_flags)
+        self.assertIn("srt_gap_validated_start", segments[1].quality_flags)
+        self.assertEqual(summary["srt_gap_validated_boundaries"], 1)
+
+        unchanged_segments, unchanged_summary, _ = build_segments_from_subtitles(
+            sequence_no=1,
+            subtitle_spans=subtitle_spans,
+            utterances=utterances,
+            audio_duration_ms=7_000,
+            video_duration_ms=7_000,
+            segmentation_config=SegmentationConfig(),
+            subtitle_config=SubtitleConfig(),
+        )
+
+        self.assertNotIn("srt_gap_validated_end", unchanged_segments[0].quality_flags)
+        self.assertNotIn("srt_gap_validated_start", unchanged_segments[1].quality_flags)
+        self.assertEqual(unchanged_summary["srt_gap_validated_boundaries"], 0)
+
+    def test_repairs_sticky_asr_boundary_at_silence_inside_srt_gap(self) -> None:
+        utterances = [
+            TranscriptUtterance(
+                text="Previous tail. Current line.",
+                start_ms=1_000,
+                end_ms=4_000,
+                words=[
+                    WordTiming(text="Previous", start_ms=1_000, end_ms=1_500, confidence=0.99),
+                    WordTiming(text="tail.", start_ms=1_500, end_ms=2_000, confidence=0.99),
+                    WordTiming(text="Current", start_ms=2_000, end_ms=3_500, confidence=0.70),
+                    WordTiming(text="line.", start_ms=3_500, end_ms=4_000, confidence=0.99),
+                ],
+            )
+        ]
+        subtitle_spans = [
+            SubtitleSpan(
+                text="Previous tail.",
+                normalized_text="previous tail",
+                start_ms=900,
+                end_ms=2_600,
+                confidence=1.0,
+                frame_count=1,
+                source="srt",
+            ),
+            SubtitleSpan(
+                text="Current line.",
+                normalized_text="current line",
+                start_ms=3_300,
+                end_ms=6_300,
+                confidence=1.0,
+                frame_count=1,
+                source="srt",
+            ),
+        ]
+
+        segments, summary, _ = build_segments_from_subtitles(
+            sequence_no=1,
+            subtitle_spans=subtitle_spans,
+            utterances=utterances,
+            audio_duration_ms=7_000,
+            video_duration_ms=7_000,
+            segmentation_config=SegmentationConfig(),
+            subtitle_config=SubtitleConfig(),
+            boundary_silence_ranges=[TimeRange(start_ms=2_800, end_ms=3_100)],
+        )
+
+        self.assertEqual((segments[0].end_ms, segments[1].start_ms), (2_800, 3_100))
+        self.assertIn("silence_validated_end", segments[0].quality_flags)
+        self.assertIn("silence_validated_start", segments[1].quality_flags)
+        self.assertEqual(summary["silence_validated_boundaries"], 1)
+
+    def test_does_not_repair_when_srt_start_is_inside_boundary_silence(self) -> None:
+        utterances = [
+            TranscriptUtterance(
+                text="Previous tail. Current line.",
+                start_ms=1_000,
+                end_ms=4_000,
+                words=[
+                    WordTiming(text="Previous", start_ms=1_000, end_ms=1_500, confidence=0.99),
+                    WordTiming(text="tail.", start_ms=1_500, end_ms=2_000, confidence=0.99),
+                    WordTiming(text="Current", start_ms=2_000, end_ms=3_500, confidence=0.70),
+                    WordTiming(text="line.", start_ms=3_500, end_ms=4_000, confidence=0.99),
+                ],
+            )
+        ]
+        subtitle_spans = [
+            SubtitleSpan(
+                text="Previous tail.",
+                normalized_text="previous tail",
+                start_ms=900,
+                end_ms=2_600,
+                confidence=1.0,
+                frame_count=1,
+                source="srt",
+            ),
+            SubtitleSpan(
+                text="Current line.",
+                normalized_text="current line",
+                start_ms=3_000,
+                end_ms=6_300,
+                confidence=1.0,
+                frame_count=1,
+                source="srt",
+            ),
+        ]
+
+        segments, summary, _ = build_segments_from_subtitles(
+            sequence_no=1,
+            subtitle_spans=subtitle_spans,
+            utterances=utterances,
+            audio_duration_ms=7_000,
+            video_duration_ms=7_000,
+            segmentation_config=SegmentationConfig(),
+            subtitle_config=SubtitleConfig(),
+            boundary_silence_ranges=[TimeRange(start_ms=2_800, end_ms=3_100)],
+        )
+
+        self.assertNotIn("silence_validated_end", segments[0].quality_flags)
+        self.assertNotIn("silence_validated_start", segments[1].quality_flags)
+        self.assertEqual(summary["silence_validated_boundaries"], 0)
+
     def test_subtitle_spans_split_merged_asr_utterance(self) -> None:
         utterances = [
             TranscriptUtterance(

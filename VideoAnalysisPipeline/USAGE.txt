@@ -96,9 +96,11 @@ Background-music output config:
       "cache_dir": ".video_pipeline_cache\\bgm"
     }
 
-The pipeline still extracts a temporary full-mix analysis track for ASR and silence detection.
+The pipeline extracts a temporary 16 kHz mono PCM track for ASR and silence detection.
+Demucs receives a separate lossless 44.1 kHz stereo float PCM track so separation does not inherit the ASR downmix or bandwidth reduction.
 The persisted `03.mp3` file is now the accompaniment/BGM track.
-When the same source video is reprocessed with the same audio settings, the pipeline reuses the cached BGM stem instead of rerunning Demucs.
+When the same source video is reprocessed with the same audio settings and separation pipeline version, the pipeline reuses the cached BGM stem instead of rerunning Demucs.
+For SRT-aligned segments, a tight boundary is moved only with matching acoustic evidence. This includes a word that crosses a strict silence, or a low-confidence next word whose ASR timestamp is stuck before an independently detected low-energy range inside the matching SRT gap.
 If `video.target_size_ratio` is greater than 0, `02.mp4` is transcoded toward that source-size ratio and uses `video.audio_bitrate_kbps` as the preferred embedded AAC bitrate.
 If `video.target_bitrate_kbps` is greater than 0, `02.mp4` uses that explicit video bitrate instead of deriving one from size.
 If `video.mp4_muxer` is `psp`, `02.mp4` uses the screenshot's MPEG-4 Sony PSP (`MSNV`) container profile.

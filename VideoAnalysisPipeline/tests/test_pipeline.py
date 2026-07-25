@@ -849,6 +849,10 @@ class PipelineTests(unittest.TestCase):
                 output_path.write_bytes(b"analysis")
                 return output_path
 
+            def fake_extract_separation_audio_wav(source_path: Path, output_path: Path) -> Path:
+                output_path.write_bytes(b"stereo-separation")
+                return output_path
+
             def fake_probe_media(path: Path) -> MediaMetadata:
                 if path.suffix.lower() == ".mp4":
                     return MediaMetadata(
@@ -877,20 +881,31 @@ class PipelineTests(unittest.TestCase):
                 "total_subtitle_spans": 0,
             }
             received_cache_keys: list[str | None] = []
+            received_audio_paths: list[tuple[str, str | None]] = []
 
             def fake_extract_background_audio_mp3(
                 source_path: Path,
                 output_path: Path,
                 config: object,
                 cache_key_material: str | None = None,
+                bitrate_reference_path: Path | None = None,
             ) -> BackgroundAudioResult:
                 received_cache_keys.append(cache_key_material)
+                received_audio_paths.append(
+                    (
+                        source_path.name,
+                        bitrate_reference_path.name if bitrate_reference_path is not None else None,
+                    )
+                )
                 output_path.write_bytes(b"bgm")
                 return BackgroundAudioResult(path=output_path, from_cache=False, cache_path=None)
 
             with patch("video_analysis_pipeline.pipeline.copy_source_video", side_effect=fake_copy_source_video), patch(
                 "video_analysis_pipeline.pipeline.extract_audio_wav",
                 side_effect=fake_extract_audio_wav,
+            ), patch(
+                "video_analysis_pipeline.pipeline.extract_separation_audio_wav",
+                side_effect=fake_extract_separation_audio_wav,
             ), patch(
                 "video_analysis_pipeline.pipeline.extract_background_audio_mp3",
                 side_effect=fake_extract_background_audio_mp3,
@@ -928,6 +943,7 @@ class PipelineTests(unittest.TestCase):
 
             self.assertEqual(len(received_cache_keys), 2)
             self.assertEqual(received_cache_keys[0], received_cache_keys[1])
+            self.assertEqual(received_audio_paths, [("separation.wav", "analysis.wav")] * 2)
 
     def test_process_single_overview_rebuilds_workbook_from_existing_outputs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

@@ -6,7 +6,7 @@ import re
 from statistics import fmean, median
 
 from video_analysis_pipeline.config import SegmentationConfig, SubtitleConfig
-from video_analysis_pipeline.models import Segment, SubtitleSpan, TranscriptUtterance, WordTiming
+from video_analysis_pipeline.models import Segment, SubtitleSpan, TimeRange, TranscriptUtterance, WordTiming
 from video_analysis_pipeline.subtitle_ocr import normalize_subtitle_text
 
 _TARGETED_REPAIR_FLAGS = {
@@ -18,6 +18,9 @@ _TARGETED_REPAIR_FLAGS = {
 _MAX_TARGETED_REPAIR_SHIFT_MS = 700
 _BOUNDARY_RELAXATION_THRESHOLD_MS = 120
 _MAX_BOUNDARY_RELAXATION_MS = 900
+_SRT_SILENCE_GAP_TOLERANCE_MS = 40
+_EDGE_WORD_LOW_CONFIDENCE = 0.55
+_ASR_STICKY_BOUNDARY_TOLERANCE_MS = 20
 
 
 @dataclass(slots=True)
@@ -94,6 +97,8 @@ def build_segments_from_subtitles(
     video_duration_ms: int,
     segmentation_config: SegmentationConfig,
     subtitle_config: SubtitleConfig,
+    boundary_silence_ranges: list[TimeRange] | None = None,
+    low_confidence_boundary_silence_ranges: list[TimeRange] | None = None,
 ) -> tuple[list[Segment], dict[str, object], list[AsrWordRef]]:
     subtitle_config.validate()
     asr_words = flatten_asr_words(utterances)
@@ -183,6 +188,24 @@ def build_segments_from_subtitles(
     _apply_segment_quality_checks(segments, subtitle_spans, asr_words)
     _repair_flagged_segments(segments, subtitle_spans, asr_words)
     _relax_srt_segment_boundaries(segments, subtitle_spans)
+    repaired_srt_gap_boundaries = _repair_low_confidence_early_srt_boundaries(
+        segments=segments,
+        subtitle_spans=subtitle_spans,
+        asr_words=asr_words,
+        audio_duration_ms=audio_duration_ms,
+        video_duration_ms=video_duration_ms,
+        segmentation_config=segmentation_config,
+        boundary_silence_ranges=low_confidence_boundary_silence_ranges or [],
+    )
+    repaired_silence_boundaries = _repair_srt_boundaries_with_silence(
+        segments=segments,
+        subtitle_spans=subtitle_spans,
+        asr_words=asr_words,
+        boundary_silence_ranges=boundary_silence_ranges or [],
+        audio_duration_ms=audio_duration_ms,
+        video_duration_ms=video_duration_ms,
+        segmentation_config=segmentation_config,
+    )
     _remove_segment_overlap(segments)
     _refresh_shift_flags(segments, subtitle_spans, subtitle_config)
     _clear_timing_quality_flags(segments)
@@ -194,6 +217,8 @@ def build_segments_from_subtitles(
             "unmatched_segments": unmatched_count,
             "total_subtitle_spans": len(subtitle_spans),
             "alignment_mode": _alignment_mode(subtitle_spans),
+            "srt_gap_validated_boundaries": repaired_srt_gap_boundaries,
+            "silence_validated_boundaries": repaired_silence_boundaries,
         },
         asr_words,
     )
@@ -702,6 +727,137 @@ def _remove_segment_overlap(segments: list[Segment]) -> None:
         current.start_ms = min(current.end_ms - 1, midpoint + 1)
 
 
+def _repair_low_confidence_early_srt_boundaries(
+    segments: list[Segment],
+    subtitle_spans: list[SubtitleSpan],
+    asr_words: list[AsrWordRef],
+    audio_duration_ms: int,
+    video_duration_ms: int,
+    segmentation_config: SegmentationConfig,
+    boundary_silence_ranges: list[TimeRange],
+) -> int:
+    repaired_count = 0
+    for previous, current in zip(segments, segments[1:]):
+        if previous.source_subtitle_index is None or current.source_subtitle_index is None:
+            continue
+        if previous.source_word_range is None or current.source_word_range is None:
+            continue
+        if current.source_word_range[0] != previous.source_word_range[1] + 1:
+            continue
+
+        previous_subtitle = subtitle_spans[previous.source_subtitle_index]
+        current_subtitle = subtitle_spans[current.source_subtitle_index]
+        if previous_subtitle.source != "srt" or current_subtitle.source != "srt":
+            continue
+
+        subtitle_gap_ms = current_subtitle.start_ms - previous_subtitle.end_ms
+        if subtitle_gap_ms <= 0 or subtitle_gap_ms > segmentation_config.max_boundary_shift_ms:
+            continue
+        if current.start_ms - previous.end_ms > segmentation_config.merge_gap_ms:
+            continue
+        if previous.end_ms >= previous_subtitle.end_ms or current.start_ms >= current_subtitle.start_ms:
+            continue
+
+        last_word = asr_words[previous.source_word_range[1]]
+        first_word = asr_words[current.source_word_range[0]]
+        if first_word.confidence is None or first_word.confidence >= _EDGE_WORD_LOW_CONFIDENCE:
+            continue
+        if abs(first_word.start_ms - last_word.end_ms) > _ASR_STICKY_BOUNDARY_TOLERANCE_MS:
+            continue
+
+        first_word_start_ms = _scale_audio_to_video(first_word.start_ms, audio_duration_ms, video_duration_ms)
+        early_start_ms = previous_subtitle.end_ms - first_word_start_ms
+        if (
+            early_start_ms < _BOUNDARY_RELAXATION_THRESHOLD_MS
+            or early_start_ms > segmentation_config.max_boundary_shift_ms
+        ):
+            continue
+        if previous_subtitle.end_ms <= previous.start_ms or current_subtitle.start_ms >= current.end_ms:
+            continue
+
+        candidates: list[tuple[int, int]] = []
+        for silence in boundary_silence_ranges:
+            silence_start_ms = _scale_audio_to_video(silence.start_ms, audio_duration_ms, video_duration_ms)
+            silence_end_ms = _scale_audio_to_video(silence.end_ms, audio_duration_ms, video_duration_ms)
+            if silence_start_ms < previous_subtitle.end_ms - _SRT_SILENCE_GAP_TOLERANCE_MS:
+                continue
+            if silence_end_ms > current_subtitle.start_ms + _SRT_SILENCE_GAP_TOLERANCE_MS:
+                continue
+            if silence_start_ms <= previous.start_ms or silence_end_ms >= current.end_ms:
+                continue
+            if silence_start_ms <= previous.end_ms or silence_end_ms <= current.start_ms:
+                continue
+            candidates.append((silence_start_ms, silence_end_ms))
+
+        if not candidates:
+            continue
+
+        silence_start_ms, silence_end_ms = max(candidates, key=lambda item: (item[1], item[1] - item[0]))
+        previous.end_ms = silence_start_ms
+        current.start_ms = silence_end_ms
+        _append_quality_flag(previous, "srt_gap_validated_end")
+        _append_quality_flag(current, "srt_gap_validated_start")
+        repaired_count += 1
+
+    return repaired_count
+
+
+def _repair_srt_boundaries_with_silence(
+    segments: list[Segment],
+    subtitle_spans: list[SubtitleSpan],
+    asr_words: list[AsrWordRef],
+    boundary_silence_ranges: list[TimeRange],
+    audio_duration_ms: int,
+    video_duration_ms: int,
+    segmentation_config: SegmentationConfig,
+) -> int:
+    repaired_count = 0
+    for previous, current in zip(segments, segments[1:]):
+        if previous.source_subtitle_index is None or current.source_subtitle_index is None:
+            continue
+        if previous.source_word_range is None or current.source_word_range is None:
+            continue
+
+        previous_subtitle = subtitle_spans[previous.source_subtitle_index]
+        current_subtitle = subtitle_spans[current.source_subtitle_index]
+        if previous_subtitle.source != "srt" or current_subtitle.source != "srt":
+            continue
+        if current.start_ms - previous.end_ms > segmentation_config.merge_gap_ms:
+            continue
+
+        first_word = asr_words[current.source_word_range[0]]
+        candidates: list[tuple[int, int]] = []
+        for silence in boundary_silence_ranges:
+            if first_word.start_ms >= silence.start_ms or first_word.end_ms <= silence.end_ms:
+                continue
+
+            silence_start_ms = _scale_audio_to_video(silence.start_ms, audio_duration_ms, video_duration_ms)
+            silence_end_ms = _scale_audio_to_video(silence.end_ms, audio_duration_ms, video_duration_ms)
+            if current.start_ms >= silence_start_ms:
+                continue
+            if silence_start_ms < previous_subtitle.end_ms - _SRT_SILENCE_GAP_TOLERANCE_MS:
+                continue
+            if silence_end_ms > current_subtitle.start_ms + _SRT_SILENCE_GAP_TOLERANCE_MS:
+                continue
+            if abs(silence_start_ms - previous.end_ms) > segmentation_config.max_boundary_shift_ms:
+                continue
+            if silence_start_ms <= previous.start_ms or silence_end_ms >= current.end_ms:
+                continue
+            candidates.append((silence_start_ms, silence_end_ms))
+
+        if not candidates:
+            continue
+
+        silence_start_ms, silence_end_ms = max(candidates, key=lambda item: (item[1], item[1] - item[0]))
+        previous.end_ms = max(previous.start_ms + 1, silence_start_ms)
+        current.start_ms = min(current.end_ms - 1, max(previous.end_ms + 1, silence_end_ms))
+        _append_quality_flag(previous, "silence_validated_end")
+        _append_quality_flag(current, "silence_validated_start")
+        repaired_count += 1
+
+    return repaired_count
+
+
 def _apply_segment_quality_checks(
     segments: list[Segment],
     subtitle_spans: list[SubtitleSpan],
@@ -743,7 +899,7 @@ def _apply_segment_quality_checks(
             continue
 
         edge_confidences = [matched_words[0].confidence, matched_words[-1].confidence]
-        if any(confidence is not None and confidence < 0.55 for confidence in edge_confidences):
+        if any(confidence is not None and confidence < _EDGE_WORD_LOW_CONFIDENCE for confidence in edge_confidences):
             _append_quality_flag(segment, "edge_word_low_confidence")
 
         word_durations = [max(1, word.end_ms - word.start_ms) for word in matched_words]

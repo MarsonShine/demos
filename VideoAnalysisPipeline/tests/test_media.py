@@ -15,12 +15,28 @@ from video_analysis_pipeline.media import (
     copy_source_video,
     detect_silence,
     extract_background_audio_mp3,
+    extract_separation_audio_wav,
     resolve_source_video_export_stage,
 )
 from video_analysis_pipeline.models import MediaMetadata
 
 
 class MediaTests(unittest.TestCase):
+    @patch("video_analysis_pipeline.media.run_command")
+    def test_extract_separation_audio_wav_preserves_stereo_float_input_for_demucs(self, mock_run_command: object) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            source_video = Path(tmp_dir) / "source.mp4"
+            output_audio = Path(tmp_dir) / "separation.wav"
+
+            result = extract_separation_audio_wav(source_video, output_audio)
+
+            self.assertEqual(result, output_audio)
+            args = mock_run_command.call_args.args[0]
+            self.assertEqual(args[args.index("-map") + 1], "0:a:0")
+            self.assertEqual(args[args.index("-ac") + 1], "2")
+            self.assertEqual(args[args.index("-ar") + 1], "44100")
+            self.assertEqual(args[args.index("-c:a") + 1], "pcm_f32le")
+
     def test_calculate_target_bitrate_kbps_from_target_size(self) -> None:
         bitrate_kbps = _calculate_target_bitrate_kbps(target_size_kb=955, duration_ms=240_000, minimum_kbps=32, label="audio")
 

@@ -30,6 +30,7 @@ from video_analysis_pipeline.media import (
     extract_background_audio_mp3,
     extract_cover,
     extract_muted_video,
+    extract_separation_audio_wav,
     probe_media,
     resolve_source_video_export_stage,
 )
@@ -89,6 +90,8 @@ def _populate_segment_translations(segments: list[Segment], config: PipelineConf
 MOD_FINAL_OUTPUT = "mod"
 MOD_ITEM_ROOT_NAME = "dubbing"
 MOD_DEFAULT_WORKBOOK_NAME = "movie_dubbing.xlsx"
+BOUNDARY_MIN_SILENCE_DURATION_MS = 80
+LOW_CONFIDENCE_BOUNDARY_SILENCE_DB_OFFSET = 3.0
 MOD_REMOVABLE_FILENAMES = frozenset(
     {
         "batch_progress.json",
@@ -184,13 +187,18 @@ def process_single_video(
                 export_source_video=steps.export_source_video,
                 config=config,
             )
+            separation_audio_path = progress_tracker.run(
+                "extract-separation-audio",
+                lambda: extract_separation_audio_wav(source_asset, Path(temp_dir) / "separation.wav"),
+            )
             background_audio_result = progress_tracker.run(
                 "extract-bgm",
                 lambda: extract_background_audio_mp3(
-                    analysis_audio_path,
+                    separation_audio_path,
                     output_dir / "03.mp3",
                     config.audio,
                     cache_key_material=source_cache_key_material,
+                    bitrate_reference_path=analysis_audio_path,
                 ),
             )
         else:
@@ -206,6 +214,34 @@ def process_single_video(
                 total_duration_ms=analysis_audio_metadata.duration_ms,
                 silence_threshold_db=config.segmentation.silence_threshold_db,
                 min_silence_duration_ms=config.segmentation.min_silence_duration_ms,
+            ),
+        )
+        boundary_silence_duration_ms = min(
+            BOUNDARY_MIN_SILENCE_DURATION_MS,
+            config.segmentation.min_silence_duration_ms,
+        )
+        if boundary_silence_duration_ms < config.segmentation.min_silence_duration_ms:
+            boundary_silence_ranges, _ = progress_tracker.run(
+                "detect-boundary-silence",
+                lambda: detect_silence(
+                    audio_path=analysis_audio_path,
+                    total_duration_ms=analysis_audio_metadata.duration_ms,
+                    silence_threshold_db=config.segmentation.silence_threshold_db,
+                    min_silence_duration_ms=boundary_silence_duration_ms,
+                ),
+            )
+        else:
+            boundary_silence_ranges = silence_ranges
+        low_confidence_boundary_silence_ranges, _ = progress_tracker.run(
+            "detect-low-confidence-boundary-silence",
+            lambda: detect_silence(
+                audio_path=analysis_audio_path,
+                total_duration_ms=analysis_audio_metadata.duration_ms,
+                silence_threshold_db=(
+                    config.segmentation.silence_threshold_db
+                    + LOW_CONFIDENCE_BOUNDARY_SILENCE_DB_OFFSET
+                ),
+                min_silence_duration_ms=boundary_silence_duration_ms,
             ),
         )
         utterances = progress_tracker.run(
@@ -233,6 +269,8 @@ def process_single_video(
             source_metadata=source_metadata,
             config=config,
             non_silent_ranges=non_silent_ranges,
+            boundary_silence_ranges=boundary_silence_ranges,
+            low_confidence_boundary_silence_ranges=low_confidence_boundary_silence_ranges,
         ),
     )
 
@@ -1073,6 +1111,8 @@ def _build_output_segments(
     source_metadata: Any,
     config: PipelineConfig,
     non_silent_ranges: list[Any],
+    boundary_silence_ranges: list[Any],
+    low_confidence_boundary_silence_ranges: list[Any],
 ) -> tuple[list[Segment], dict[str, object], list[dict[str, object]]]:
     alignment_summary = {
         "alignment_mode": "asr-only",
@@ -1092,6 +1132,8 @@ def _build_output_segments(
             video_duration_ms=source_metadata.duration_ms,
             segmentation_config=config.segmentation,
             subtitle_config=config.subtitle,
+            boundary_silence_ranges=boundary_silence_ranges,
+            low_confidence_boundary_silence_ranges=low_confidence_boundary_silence_ranges,
         )
         asr_word_json = [item.to_json() for item in asr_words]
         title_segment = _build_leading_title_segment(
@@ -1245,7 +1287,12 @@ def _build_manifest_payload(
         "muted_video": str(muted_video_path),
         "audio_mp3": str(audio_path) if audio_path is not None else None,
         "audio_processing": {
-            "analysis_audio_kind": "temporary-full-mix",
+            "analysis_audio_kind": "temporary-mono-16k",
+            "separation_audio_kind": (
+                "temporary-stereo-float32-44k"
+                if audio_path is not None and background_audio_result.source_path is None
+                else None
+            ),
             "output_audio_kind": "bgm" if audio_path is not None else "none",
             "separation_method": config.audio.method if audio_path is not None and background_audio_result.source_path is None else None,
             "separation_model": config.audio.demucs_model if audio_path is not None and background_audio_result.source_path is None else None,

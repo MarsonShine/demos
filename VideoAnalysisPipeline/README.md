@@ -19,16 +19,18 @@ Python pipeline for dubbing-prep asset generation.
    - sheet 1: overview rows
    - sheet 2: segment rows with English text plus a teaching-friendly Chinese translation column
 4. Use Azure OpenAI Chat Completions during workbook generation to create a concise Chinese overview and teaching-friendly Chinese translations for each segment.
-5. Cache Demucs BGM outputs under `.video_pipeline_cache\bgm` to avoid repeated separation work.
-6. Write `batch_progress.json` and `batch_summary.json` during batch runs.
-7. Support final MOD packaging in batch mode via `--final-output mod`:
+5. Feed ASR and silence detection with a temporary 16 kHz mono PCM track, while Demucs receives a separate lossless 44.1 kHz stereo float PCM track so BGM separation preserves the source stereo field and bandwidth.
+6. Cache versioned Demucs BGM outputs under `.video_pipeline_cache\bgm` to avoid repeated separation work without reusing stems produced by an older audio path.
+7. Write `batch_progress.json` and `batch_summary.json` during batch runs.
+8. Support final MOD packaging in batch mode via `--final-output mod`:
    - root workbook: `movie_dubbing.xlsx`
    - item folders: `dubbing/<sequence_no>`
    - remove intermediate JSON/HTML/CSV files after packaging
-8. Support target-size export controls for generated assets:
+9. Support target-size export controls for generated assets:
    - `02.mp4` can be transcoded from a source-size ratio or an explicit video bitrate, and can also pin H.264 profile/level, keyframe interval, reference frames, frame size, frame rate, and embedded AAC export settings
    - `03.mp3` can derive its MP3 bitrate from a source-size ratio or use an explicit MP3 bitrate
-9. When `overview.difficulty` is left blank, sheet-1 difficulty is auto-scored from subtitle complexity on a `1-6` scale.
+10. When `overview.difficulty` is left blank, sheet-1 difficulty is auto-scored from subtitle complexity on a `1-6` scale.
+11. For SRT-aligned segmentation, validate suspicious tight boundaries against short acoustic silences. The pipeline also repairs a low-confidence ASR word boundary that is stuck before its SRT gap, but only when an independently detected low-energy range confirms the gap.
 
 ## Execution modes
 

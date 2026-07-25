@@ -29,6 +29,7 @@ DEFAULT_VIDEO_AUDIO_BITRATE_KBPS = 128
 AUTO_SOURCE_AUDIO_SHARE_RATIO = 0.25
 AUTO_VIDEO_FLOOR_PIXELS_PER_KBPS = 1400
 AUTO_STANDARD_SHORT_EDGES = (2160, 1440, 1080, 900, 720, 576, 540, 480, 432, 360, 288, 270, 240, 216, 180, 144)
+BGM_CACHE_PIPELINE_VERSION = "stereo-f32-44k-v1"
 
 
 @dataclass(slots=True)
@@ -589,11 +590,38 @@ def extract_audio_wav(source_path: Path, output_path: Path) -> Path:
     return output_path
 
 
+def extract_separation_audio_wav(source_path: Path, output_path: Path) -> Path:
+    """Extract a lossless stereo mix for Demucs without using the ASR downmix."""
+    run_command(
+        [
+            "ffmpeg",
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            str(source_path),
+            "-map",
+            "0:a:0",
+            "-vn",
+            "-ac",
+            "2",
+            "-ar",
+            "44100",
+            "-c:a",
+            "pcm_f32le",
+            str(output_path),
+        ]
+    )
+    return output_path
+
+
 def extract_background_audio_mp3(
     source_path: Path,
     output_path: Path,
     config: AudioConfig,
     cache_key_material: str | None = None,
+    bitrate_reference_path: Path | None = None,
 ) -> BackgroundAudioResult:
     config.validate()
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -606,7 +634,8 @@ def extract_background_audio_mp3(
     should_cleanup_temp_dir = False
     try:
         source_metadata = probe_media(source_path)
-        source_size_kb = source_path.stat().st_size / 1024
+        size_reference_path = bitrate_reference_path or source_path
+        source_size_kb = size_reference_path.stat().st_size / 1024
         mp3_bitrate_kbps = _resolve_background_audio_bitrate_kbps(config, source_size_kb, source_metadata.duration_ms)
         separation_root = temp_dir / "separated"
         command = [
@@ -673,7 +702,7 @@ def _resolve_bgm_cache_path(config: AudioConfig, cache_key_material: str) -> Pat
     cache_key = hashlib.sha256(
         (
             f"{cache_key_material}|{config.method}|{config.demucs_model}|{config.demucs_device}|"
-            f"{config.mp3_bitrate_kbps}|{config.target_size_ratio}|{config.jobs}"
+            f"{config.mp3_bitrate_kbps}|{config.target_size_ratio}|{config.jobs}|{BGM_CACHE_PIPELINE_VERSION}"
         ).encode("utf-8")
     ).hexdigest()
     cache_root = Path(config.cache_dir)
