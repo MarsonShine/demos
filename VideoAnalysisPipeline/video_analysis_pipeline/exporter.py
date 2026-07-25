@@ -5,6 +5,8 @@ import json
 import html
 import os
 import tempfile
+import threading
+import time
 from pathlib import Path
 from typing import Iterable
 
@@ -17,27 +19,50 @@ OVERVIEW_HEADERS = ["学段", "科目", "序号", "电影名称", "视频标题"
 SEGMENT_HEADERS = ["序号", "分视频序号", "分视频文本", "分视频文本（中文）", "起始时间", "结束时间"]
 
 
+_JSON_WRITE_LOCK = threading.RLock()
+_JSON_REPLACE_ATTEMPTS = 8
+_JSON_REPLACE_INITIAL_DELAY_SECONDS = 0.025
+_JSON_REPLACE_MAX_DELAY_SECONDS = 0.25
+
+
+def _replace_json_file_with_retry(tmp_path: str, path: Path) -> None:
+    for attempt in range(_JSON_REPLACE_ATTEMPTS):
+        try:
+            os.replace(tmp_path, path)
+            return
+        except PermissionError as exc:
+            if attempt == _JSON_REPLACE_ATTEMPTS - 1:
+                raise PermissionError(
+                    f"Cannot atomically update JSON because the destination remains locked or unavailable: {path}"
+                ) from exc
+            delay_seconds = min(
+                _JSON_REPLACE_INITIAL_DELAY_SECONDS * (2**attempt),
+                _JSON_REPLACE_MAX_DELAY_SECONDS,
+            )
+            time.sleep(delay_seconds)
+
+
 def write_json(path: Path, payload: object) -> Path:
     """Atomically write JSON payload to *path* via temp-file + flush/fsync + os.replace."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_path = tempfile.mkstemp(
-        suffix=".json",
-        prefix=".tmp-",
-        dir=str(path.parent),
-    )
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, ensure_ascii=False, indent=2)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp_path, path)
-    except BaseException:
-        # Clean up temp file on any failure
+    with _JSON_WRITE_LOCK:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_path = tempfile.mkstemp(
+            suffix=".json",
+            prefix=".tmp-",
+            dir=str(path.parent),
+        )
         try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, ensure_ascii=False, indent=2)
+                handle.flush()
+                os.fsync(handle.fileno())
+            _replace_json_file_with_retry(tmp_path, path)
+        except BaseException:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
     return path
 
 

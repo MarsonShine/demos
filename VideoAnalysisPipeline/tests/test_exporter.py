@@ -1,16 +1,75 @@
 from __future__ import annotations
 
+import json
+import os
 import tempfile
+import threading
+import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from unittest.mock import patch
 
 from openpyxl import load_workbook
 
-from video_analysis_pipeline.exporter import export_review_page, export_workbook
+from video_analysis_pipeline.exporter import export_review_page, export_workbook, write_json
 from video_analysis_pipeline.models import OverviewRow, Segment
 
 
 class ExporterTests(unittest.TestCase):
+    def test_write_json_retries_transient_permission_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_path = Path(tmp_dir) / "batch_progress.json"
+            real_replace = os.replace
+            attempts = 0
+
+            def flaky_replace(source: str, destination: Path) -> None:
+                nonlocal attempts
+                attempts += 1
+                if attempts < 3:
+                    raise PermissionError(5, "Access is denied")
+                real_replace(source, destination)
+
+            with (
+                patch("video_analysis_pipeline.exporter.os.replace", side_effect=flaky_replace),
+                patch("video_analysis_pipeline.exporter.time.sleep") as sleep_mock,
+            ):
+                write_json(output_path, {"status": "running"})
+
+            self.assertEqual(attempts, 3)
+            self.assertEqual(sleep_mock.call_count, 2)
+            self.assertEqual(json.loads(output_path.read_text(encoding="utf-8")), {"status": "running"})
+            self.assertEqual(list(output_path.parent.glob(".tmp-*.json")), [])
+
+    def test_write_json_serializes_concurrent_updates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_path = Path(tmp_dir) / "batch_progress.json"
+            real_replace = os.replace
+            counter_lock = threading.Lock()
+            active_replacements = 0
+            max_active_replacements = 0
+
+            def tracked_replace(source: str, destination: Path) -> None:
+                nonlocal active_replacements, max_active_replacements
+                with counter_lock:
+                    active_replacements += 1
+                    max_active_replacements = max(max_active_replacements, active_replacements)
+                try:
+                    time.sleep(0.005)
+                    real_replace(source, destination)
+                finally:
+                    with counter_lock:
+                        active_replacements -= 1
+
+            with patch("video_analysis_pipeline.exporter.os.replace", side_effect=tracked_replace):
+                with ThreadPoolExecutor(max_workers=8) as executor:
+                    list(executor.map(lambda value: write_json(output_path, {"value": value}), range(24)))
+
+            final_payload = json.loads(output_path.read_text(encoding="utf-8"))
+            self.assertIn(final_payload["value"], range(24))
+            self.assertEqual(max_active_replacements, 1)
+            self.assertEqual(list(output_path.parent.glob(".tmp-*.json")), [])
+
     def test_export_workbook_populates_overview_and_segment_sheets(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             output_path = Path(tmp_dir) / "dubbing.result.xlsx"
