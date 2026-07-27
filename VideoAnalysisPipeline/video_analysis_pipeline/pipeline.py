@@ -37,7 +37,11 @@ from video_analysis_pipeline.media import (
 from video_analysis_pipeline.models import OverviewRow, Segment, SubtitleSpan, TranscriptUtterance
 from video_analysis_pipeline.progress import ProgressEventCallback, StageProgressTracker
 from video_analysis_pipeline.segmentation import build_segments
-from video_analysis_pipeline.subtitle_alignment import build_segments_from_subtitles, flatten_asr_words
+from video_analysis_pipeline.subtitle_alignment import (
+    build_segments_from_subtitles,
+    flatten_asr_words,
+    repair_leading_title_boundary,
+)
 from video_analysis_pipeline.subtitle_srt import discover_srt_path, parse_srt_file
 from video_analysis_pipeline.timecode import natural_sort_key
 
@@ -1146,6 +1150,16 @@ def _build_output_segments(
             aligned_segments=segments,
         )
         if title_segment is not None:
+            if segments and repair_leading_title_boundary(
+                title_segment=title_segment,
+                first_aligned_segment=segments[0],
+                subtitle_spans=subtitle_spans,
+                asr_words=asr_words,
+                boundary_silence_ranges=boundary_silence_ranges,
+                audio_duration_ms=analysis_audio_metadata.duration_ms,
+                video_duration_ms=source_metadata.duration_ms,
+            ):
+                alignment_summary["title_silence_validated_boundary"] = True
             segments = [title_segment, *segments]
             _renumber_segments(segments)
             alignment_summary["prepended_title_segment"] = True

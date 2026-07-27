@@ -3,11 +3,109 @@ from __future__ import annotations
 import unittest
 
 from video_analysis_pipeline.config import SegmentationConfig, SubtitleConfig
-from video_analysis_pipeline.models import SubtitleSpan, TimeRange, TranscriptUtterance, WordTiming
-from video_analysis_pipeline.subtitle_alignment import build_segments_from_subtitles
+from video_analysis_pipeline.models import Segment, SubtitleSpan, TimeRange, TranscriptUtterance, WordTiming
+from video_analysis_pipeline.subtitle_alignment import (
+    build_segments_from_subtitles,
+    flatten_asr_words,
+    repair_leading_title_boundary,
+)
 
 
 class SubtitleAlignmentTests(unittest.TestCase):
+    def test_repairs_sticky_first_srt_word_after_generated_title_at_silence(self) -> None:
+        utterances = [
+            TranscriptUtterance(
+                text="Postal workers. A postal worker.",
+                start_ms=0,
+                end_ms=6_000,
+                words=[
+                    WordTiming(text="Postal", start_ms=0, end_ms=1_000, confidence=0.36),
+                    WordTiming(text="workers.", start_ms=1_000, end_ms=1_560, confidence=0.42),
+                    WordTiming(text="A", start_ms=1_560, end_ms=2_980, confidence=0.10),
+                    WordTiming(text="postal", start_ms=4_240, end_ms=4_780, confidence=0.99),
+                    WordTiming(text="worker.", start_ms=4_780, end_ms=5_300, confidence=0.99),
+                ],
+            )
+        ]
+        title_segment = Segment(
+            sequence_no=1,
+            segment_no=1,
+            text="Postal workers.",
+            start_ms=0,
+            end_ms=1_479,
+            source_word_range=[0, 1],
+            quality_flags=["title_segment_from_asr"],
+        )
+        first_segment = Segment(
+            sequence_no=1,
+            segment_no=2,
+            text="A postal worker.",
+            start_ms=1_480,
+            end_ms=5_300,
+            text_source="srt",
+            source_subtitle_index=0,
+            source_word_range=[2, 4],
+        )
+        subtitle_spans = [
+            SubtitleSpan(
+                text="A postal worker.",
+                normalized_text="a postal worker",
+                start_ms=3_840,
+                end_ms=5_300,
+                confidence=1.0,
+                frame_count=1,
+                source="srt",
+            )
+        ]
+        asr_words = flatten_asr_words(utterances)
+
+        repaired = repair_leading_title_boundary(
+            title_segment=title_segment,
+            first_aligned_segment=first_segment,
+            subtitle_spans=subtitle_spans,
+            asr_words=asr_words,
+            boundary_silence_ranges=[TimeRange(start_ms=1_933, end_ms=4_240)],
+            audio_duration_ms=7_000,
+            video_duration_ms=7_000,
+        )
+
+        self.assertTrue(repaired)
+        self.assertEqual((title_segment.end_ms, first_segment.start_ms), (1_933, 4_240))
+        self.assertIn("title_boundary_silence_end", title_segment.quality_flags)
+        self.assertIn("title_boundary_silence_start", first_segment.quality_flags)
+
+        unchanged_title = Segment(
+            sequence_no=1,
+            segment_no=1,
+            text="Postal workers.",
+            start_ms=0,
+            end_ms=1_479,
+            source_word_range=[0, 1],
+            quality_flags=["title_segment_from_asr"],
+        )
+        unchanged_first = Segment(
+            sequence_no=1,
+            segment_no=2,
+            text="A postal worker.",
+            start_ms=1_480,
+            end_ms=5_300,
+            text_source="srt",
+            source_subtitle_index=0,
+            source_word_range=[2, 4],
+        )
+        self.assertFalse(
+            repair_leading_title_boundary(
+                title_segment=unchanged_title,
+                first_aligned_segment=unchanged_first,
+                subtitle_spans=subtitle_spans,
+                asr_words=asr_words,
+                boundary_silence_ranges=[],
+                audio_duration_ms=7_000,
+                video_duration_ms=7_000,
+            )
+        )
+        self.assertEqual((unchanged_title.end_ms, unchanged_first.start_ms), (1_479, 1_480))
+
     def test_repairs_low_confidence_first_word_stuck_before_srt_gap(self) -> None:
         utterances = [
             TranscriptUtterance(

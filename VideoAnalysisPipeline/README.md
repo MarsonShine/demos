@@ -31,6 +31,7 @@ Python pipeline for dubbing-prep asset generation.
    - `03.mp3` can derive its MP3 bitrate from a source-size ratio or use an explicit MP3 bitrate
 10. When `overview.difficulty` is left blank, sheet-1 difficulty is auto-scored from subtitle complexity on a `1-6` scale.
 11. For SRT-aligned segmentation, validate suspicious tight boundaries against short acoustic silences. The pipeline also repairs a low-confidence ASR word boundary that is stuck before its SRT gap, but only when an independently detected low-energy range confirms the gap.
+12. Apply the same acoustic validation to an automatically generated leading title segment. If the first low-confidence SRT word is stuck to the title words, a strict silence containing the first SRT start separates the title from the body.
 
 ## Execution modes
 

@@ -802,6 +802,78 @@ def _repair_low_confidence_early_srt_boundaries(
     return repaired_count
 
 
+def repair_leading_title_boundary(
+    title_segment: Segment,
+    first_aligned_segment: Segment,
+    subtitle_spans: list[SubtitleSpan],
+    asr_words: list[AsrWordRef],
+    boundary_silence_ranges: list[TimeRange],
+    audio_duration_ms: int,
+    video_duration_ms: int,
+) -> bool:
+    if "title_segment_from_asr" not in title_segment.quality_flags:
+        return False
+    if title_segment.source_word_range is None or first_aligned_segment.source_word_range is None:
+        return False
+    if first_aligned_segment.source_subtitle_index is None:
+        return False
+    if first_aligned_segment.source_word_range[0] != title_segment.source_word_range[1] + 1:
+        return False
+
+    first_subtitle = subtitle_spans[first_aligned_segment.source_subtitle_index]
+    if first_subtitle.source != "srt":
+        return False
+
+    last_title_word = asr_words[title_segment.source_word_range[1]]
+    first_aligned_word = asr_words[first_aligned_segment.source_word_range[0]]
+    if first_aligned_word.confidence is None or first_aligned_word.confidence >= _EDGE_WORD_LOW_CONFIDENCE:
+        return False
+    if abs(first_aligned_word.start_ms - last_title_word.end_ms) > _ASR_STICKY_BOUNDARY_TOLERANCE_MS:
+        return False
+
+    first_word_start_ms = _scale_audio_to_video(
+        first_aligned_word.start_ms,
+        audio_duration_ms,
+        video_duration_ms,
+    )
+    if first_subtitle.start_ms - first_word_start_ms < _BOUNDARY_RELAXATION_THRESHOLD_MS:
+        return False
+
+    last_title_word_end_ms = _scale_audio_to_video(
+        last_title_word.end_ms,
+        audio_duration_ms,
+        video_duration_ms,
+    )
+    candidates: list[tuple[int, int]] = []
+    for silence in boundary_silence_ranges:
+        silence_start_ms = _scale_audio_to_video(silence.start_ms, audio_duration_ms, video_duration_ms)
+        silence_end_ms = _scale_audio_to_video(silence.end_ms, audio_duration_ms, video_duration_ms)
+        if silence_start_ms < last_title_word_end_ms - _SRT_SILENCE_GAP_TOLERANCE_MS:
+            continue
+        if silence_start_ms > first_subtitle.start_ms + _SRT_SILENCE_GAP_TOLERANCE_MS:
+            continue
+        if silence_end_ms < first_subtitle.start_ms - _SRT_SILENCE_GAP_TOLERANCE_MS:
+            continue
+        if silence_start_ms <= title_segment.end_ms or silence_end_ms <= first_aligned_segment.start_ms:
+            continue
+        if silence_end_ms >= first_aligned_segment.end_ms:
+            continue
+        candidates.append((silence_start_ms, silence_end_ms))
+
+    if not candidates:
+        return False
+
+    silence_start_ms, silence_end_ms = max(
+        candidates,
+        key=lambda item: (item[1] - item[0], -abs(((item[0] + item[1]) // 2) - first_subtitle.start_ms)),
+    )
+    title_segment.end_ms = silence_start_ms
+    first_aligned_segment.start_ms = silence_end_ms
+    _append_quality_flag(title_segment, "title_boundary_silence_end")
+    _append_quality_flag(first_aligned_segment, "title_boundary_silence_start")
+    return True
+
+
 def _repair_srt_boundaries_with_silence(
     segments: list[Segment],
     subtitle_spans: list[SubtitleSpan],
